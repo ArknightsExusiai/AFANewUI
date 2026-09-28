@@ -25,6 +25,7 @@ reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Windows" /v LowLevelHo
 
 - 键不存在 ⇒ 用系统默认值（本机实测：该键**不存在**）。该键存在但数值很小时，任何钩子持有者的短暂停顿都会被放大成"输入丢失"。
 - AFA 侧相关预算：`main.ahk` 的 `#HotIfTimeout 100`（AHK 默认 1000ms，比系统红线宽得多，故收紧）；动作层最长不可中断窗口是失焦悬停激活的 `HotkeyService.ActivateTimeoutMs`(200ms)。
+- AFA 用 `KeyHistory 200` 保留按键历史：AHK 的 KeyHistory 窗口顶部直接显示 **Keybd hook 是否仍安装**、最近按键流是否停更——这是区分"系统已摘除钩子"与"HotIf 判定返回 false"最直接的自证证据，排查时优先打开它。
 
 判读时注意：**这个键缺失不等于没有超时**，只等于用默认值。
 
@@ -162,3 +163,16 @@ AFA 提供的证据链（都在日志里，配合 `HookHealth` 快照读）：
 - 快照输出 `recover=` 累计自愈次数。
 
 **判读**：`recover` 持续增长 ⇒ 停止把自愈当作解决办法，转而排查第 2、3 步的前置钩子；把 AFA 的钩子链优先级被谁抢、以及每次自愈的时间点与用户操作时间线对照。
+
+## 7. 探针自身的判读口径（误报是怎么被挡掉的）
+
+钩子探针用**不依赖钩子**的 `GetAsyncKeyState` 采样热键键位的物理按下沿，与**依赖钩子**的 `NoteFire` 回调计数对照；观测到物理按下却在宽限期内没有同键回调，才记一次未命中。以下口径缺一个都会造成误报，改探针时不要绕过：
+
+- **`PendingGraceMs`(3000ms) 必须覆盖完整触发路径**：失焦悬停的激活等待（`ActivateTimeoutMs` 200ms）+ 最长一组过帧 + 采样余量。定得太短，正常但"慢"的动作会被判成未触发。
+- **建档前提（`_ShouldArm`）**：游戏须为前台（`GameTarget.IsForegroundCached()`）、该键不是 AFA 自己注入的按下（`GameKeys.IsInjectedPressPending`）、也没有正在补发的 up（`KeyForward.SuppressUp`）——这三类按下本来就不该触发热键。
+- **竞态窗口 `FireRaceWindowMs`(250ms)**：探针采样可能晚于钩子回调；该键刚回调过且此后未见过抬起 ⇒ 判定为已命中，不建档。
+- **结算必须按计数差，不能用 `Has`**：`fire` 存的是按下瞬间的回调计数快照，`_FireByKey.Get(key,0) > info.fire` 才算"宽限期内有回调"——用"表里有没有这个键"判定会因为历史触发过而永远为真。
+- **前提失效即作废该次观测**（记 `discard`）：前台窗口已切换；鼠标键要求光标仍在游戏客户区内。按键被注销（热键禁用/分组切换）记 `watchDrop`——这些情形下"没有回调"是正确的。
+- **同键重入被 `MaxThreadsPerHotkey` 正常屏蔽**：`_Depth > 0` 时跳过结算，不算异常。
+- **键位集合变更须即时重建监视表**（`RefreshWatchKeysNow`）：`HotkeyService` 在 `HotkeyOff`/`EnableByTab` 后会立刻清空 `ActiveHotkeys`，若等 5s 定时刷新，空窗期内会为"本不该有回调"的按下建档并误报。
+- **自证计数**：每次观测按纯键名累计 `arm`/`raceSkip`/`cleared`/`miss`/`discard`/`watchDrop`，快照里给出 `arm≈cleared+miss+discard+watchDrop 为正常`——探针自身漏账时会在这里暴露。

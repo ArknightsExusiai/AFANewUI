@@ -11,6 +11,8 @@
 
 - **BILI（哔哩哔哩渠道，serverId=`BILI`）与 CN 共享 company/product（`HyperGryph\Arknights`）→ 注册表根与游戏内按键设置完全相同**，仅安装目录特征（`Arknights bilibili`，布局 `games\Arknights\Arknights.exe`，见 `ServerProfile.ScanPaths`）可与 CN 区分。
 - **CN 官服自身也有 `games\Arknights\Arknights.exe` 布局**（如 `E:\Hypergryph Launcher\games\Arknights\Arknights.exe`）。
+- **XelLauncher「硬链接共享运行环境」**（`.xel-linked-runtime`，识别优先级最高）：目录形如 `<物理安装父目录>\.xel-linked-runtime\<GameId>\<sharedRootId>\<渠道>\Arknights.exe`，渠道段取自 `GameChannelCatalog.Channel`（`Official`→CN / `Bilibili`→BILI）。硬链接只共享 `Arknights_Data` 下内容一致的资源，`Arknights.exe` 与 SDK/config 等渠道差异文件仍按渠道独立，**故运行目录归属只取决于渠道段，与祖先目录叫什么无关**——只按**固定位置**取段（容器段之后第 3 段），**不做全路径子串匹配**：物理安装为 B服 时其父目录名必然含 `Arknights bilibili`，子串匹配会把官服渠道的运行目录误判成 BILI，而 CN 与 BILI 的 app.info 同为 `HyperGryph/Arknights`，靠 app.info 兜底也区分不了。渠道段缺失或段数不足时返回 `""`，回落既有识别链。
+- **传统切服（XelLauncher 关闭硬链接）**：两个渠道共用同一物理安装目录，切服只就地覆盖渠道差异文件、目录名不变（仍是 `Arknights Game`），此时按"安装位置"识别只能得到 CN。`_DetectDeployedChannel` 用**两侧互斥的权威特征文件**回答"当前部署的是哪个渠道"：官服 `hgsdk.dll`；B服 `PCGameSDK.dll` + `BLPlatform64` 目录（**不用**两服共有的 `U8SDK.dll`/`U8CoreUI.dll`/`u8_channel.dll`/`config.ini`）。两侧同时命中（目录被改坏）时不猜测，返回 `""` 交回目录特征判定；该探测**只在目录特征判定为 CN 时**执行，不参与其他区服判定。
 - **TC（繁中服，serverId=`TC`）的运营方为 Gryphline，company/product = `Gryphline\Arknights_TC`**（取自游戏本体 `Arknights_Data\app.info`，实测对应 Unity persistentDataPath `AppData\LocalLow\Gryphline\Arknights_TC`）。
   - `Company` **必须**保持 app.info 的拼写 `Gryphline`、不可沿用启动器的全大写——实测本机 `HKCU\Software` 下 `Gryphline`（游戏：`Arknights_TC`/`sdk_data`）与 `GRYPHLINK`（启动器：`Launcher`）两个键**并存**，且注册表查找**精确拼写优先**：`…\GRYPHLINK\Arknights_TC` 读不到、`…\Gryphline\Arknights_TC` 可读，拼错等价于把 TC 判成未安装。
   - TC 客户端未改键前只写 `KEYBOARD_SETTING_DISPLAY_*`、没有 `KEYBOARD_SETTING_V2_*`；`GameKeys` 的已知键回退会读到 DISPLAY 并解析出 0 条映射 → 用默认按键且不弹「读取失败」警告，**属预期**。
@@ -39,7 +41,7 @@
 
 拦截正则通过 `GameKeys.GetInterceptPattern()` 动态生成——从注册表读取所有游戏按键 + `Escape|RButton|MButton`。AFA 热键绑定的按键若匹配拦截正则，不加 `~` 前缀（阻止原键传递到游戏），否则加 `~` 前缀（透传）。用户自定义游戏按键后，轮询检测到注册表变更自动重建热键，拦截列表随之更新。
 
-**热键分组**：三组热键：CombatHotkeys（常规作战）、QuickHotkeys（快捷操作）、StrongHoldHotkeys（卫戍协议）。按标签页启用对应组，组间互斥。自定义按键按「按键类型」并入既有组（global 任何标签下注册、combat/quick 并入常规组、strongHold 并入卫戍组）；「自定义按键」标签页为管理型（不切换热键组）。`ActionCallbacks` 数据化（`{Fn, Guarded}`）声明守卫标志，为守卫拦截键注册 Up 变体补发透传。
+**热键分组**：三组热键：CombatHotkeys（常规作战）、QuickHotkeys（快捷操作）、StrongHoldHotkeys（卫戍协议）。按标签页启用对应组，组间互斥。自定义按键按「按键类型」并入既有组（global 任何标签下注册、combat/quick 并入常规组、strongHold 并入卫戍组）；「自定义按键」标签页为管理型（不切换热键组）。自定义按键**不进** `HotkeySchema.Items`（条数运行时可变），其类型 → 生效组 / 是否受守卫的映射只在 `HotkeySchema.CustomTypeProfiles` 定义。`ActionCallbacks` 数据化（`{Fn, Guarded}`）声明守卫标志，为守卫拦截键注册 Up 变体补发透传。
 
 ## 常规作战关卡守卫与按键透传
 
@@ -82,7 +84,15 @@
 
 （`level_detector.ahk` + `core/hotkey/hotkey_actions.ahk`）
 
-关卡检测使用 `LevelDetector` 投票状态机——每 333ms 对 3 个关卡内专属对象（关卡内文本/退出按钮/暂停按钮）做 PixelSearch 颜色检测（区域用相对比例定位，低分辨率时文本容差放宽到 20；v1.7.2 起默认容差 3→5/10、关卡内文本识别线加宽，以误识别率为代价适应更多窗口/屏幕配置），命中 ≥2 个置位私有 `InLevel`、<2 复位。
+关卡检测使用 `LevelDetector` 投票状态机——每 333ms 对 3 个关卡内专属对象（关卡内文本/退出按钮/暂停按钮）做颜色检测，命中 ≥2 个（`VoteThreshold`）置位私有 `InLevel`、<2 复位并发布 `InLevelChanged`。区域用相对比例定位（`LX`/`RX` = 宽度比例、`UY`/`DY` = 高度比例），每个对象可配多个颜色 `{C, V}` 做 OR，**任一颜色命中即算该对象命中**：
+
+| 对象 | 位置 | 颜色 / 容差 |
+|------|------|------------|
+| `TextInLevel` | 右下角 | 白 `0xFFFFFF` + 浅灰 `0x9B9B9B`，V2；**长或宽 < 1600×900 时容差放宽到 20**（低分辨率文字更模糊） |
+| `ExitButton` | 左上角 | 灰阶 `0x868686`/`0x8C8C8C`/`0x555555`/`0x515151`，与其他模式的深红 `0xB72518`/`0xBF2719`/`0x74180F`/`0x6F160F`、黄绿 `0xD0CF67`/`0xD9D86B`/`0x848341`/`0x7E7E3F`，共 12 色 V5 |
+| `PauseButton` | 右上角 | 白 `0xFFFFFF` + `0xF5F5F5`，V2 |
+
+**投票而非单点判定是刻意的**：v1.7.2 起默认容差由 3 提到 5/10、关卡内文本识别线加宽，是以误识别率为代价适应更多窗口/屏幕配置——"至少 2 个对象命中"正是挡住单点误识别的那道闸。检测前临时 `SetThreadDpiAwarenessContext(-3)`（`finally` 还原），并**一次 `SafeCaptureClientRect()` 抓整张客户区位图后按 BGRA 在内存里扫描**，替代逐对象逐色的 `PixelSearch`（16 次 GDI 往返 → 1 次），压缩轮询忙碌段、降低与高频输入流的线程争用。窗口不存在→复位为不在关卡；窗口未激活→跳过（保持现有状态，回前台自愈）；抓图失败→按未命中处理。
 
 `GuardInLevel` 读 `LevelDetector.IsInLevel()` 判定（无瞬时像素检测）。`ActionCeaseOperations`（放弃行动）只发 `battleLeftPopup`、`ActionBack`（返回上级菜单）只发 ESC——两者功能分离于 v1.6.1；`BackCeaseOperations`（Important 配置项，默认关闭）开启后 `ActionBack` 在 ESC 后补发 `battleLeftPopup`，还原旧版"放弃行动"行为。
 
