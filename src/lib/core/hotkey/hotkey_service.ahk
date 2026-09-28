@@ -1,15 +1,8 @@
 ; == 热键控制 ==
-; 热键上下文判定（HotIf 回调）：Up 变体查状态、鼠标键查悬停、键盘键查活动窗口
-; 背景：点击任务栏/桌面等不抢占前台的区域时，游戏仍是"活动窗口"，旧判定 HotIfWinActive
-; 会把窗口外的鼠标按下误判为游戏内操作——绑定在鼠标键上的热键被误触发，且因无 ~ 前缀
-; 在钩子层吞掉点击，导致窗口外右键无法正常到达任务栏/桌面。
-; HotIf.htm：条件不成立时热键执行原生功能（像没有这个热键一样透传给系统）。
-; - Up 变体（守卫拦截补发）：若该键 down 已被 AFA 主热键处理过（DownHandled 有记录），放行补发 key up
-;   ——与窗口状态无关，解决"按住从游戏内拖出/Alt+Tab 切走后再松开"的卡键（含上次遗留的失焦边界）。
-; - 鼠标键/滚轮：鼠标悬停在游戏窗口上才触发（窗口外点击透传给系统）。
-; - 键盘键：游戏窗口为活动窗口，或（启用失焦悬停操作时）鼠标悬停在游戏窗口上才触发——失焦悬停开关
-;   （HotkeyService._HoverOperate，由"自定义"页复选框控制，保存/应用后生效）关闭后键盘键仅当游戏为活动窗口时才触发；
-;   动作层统一包装负责激活游戏窗口并恢复原窗口。鼠标键/滚轮不受开关影响，仍只受悬停判定约束。
+; 热键上下文判定（HotIf 回调），三分支：Up 变体查键级状态、鼠标键/滚轮查悬停、键盘键查活动窗口。
+; - Up 变体：该键 down 已被 AFA 处理过即放行补发 up，解决"按住后拖出游戏/切走再松开"的卡键。
+; - 鼠标键/滚轮：仅光标悬停在游戏窗口上时触发（不受失焦悬停开关影响）。
+; - 键盘键：游戏为活动窗口，或启用 _HoverOperate（失焦悬停）时悬停在游戏上；动作层负责激活窗口。
 HotkeyContext(hotkeyName) {
     pureKey := KeyForward.PureKeyName(hotkeyName)
     if (pureKey = "")
@@ -17,11 +10,11 @@ HotkeyContext(hotkeyName) {
     ; 单次 HotIf 求值计时：求值本身就发生在钩子判定路径上，主线程在此停留多久直接决定钩子会不会超时。
     evalStart := Qpc()
 
-    ; Up 变体（守卫补发型）：仅当该键的 down 已被 AFA 主热键处理过（DownHandled 有记录，无论守卫放行/拦截）
-    ; 才放行补发 key up——覆盖失焦/拖出卡键；游戏外主热键不触发（down 透传）则不放行，物理 up 正常透传（打字不受影响）。
+    ; Up 变体（守卫补发型）：仅当 down 已被 AFA 处理过（DownHandled 有记录，无论放行/拦截）才放行补发 up；
+    ; 游戏外主热键不触发（down 已透传）则不放行，物理 up 正常透传（不影响打字）
     if RegExMatch(hotkeyName, " Up$") {
-        ; 补发 up 期间钩子会捕获 Send 注入的 up，若仍放行会递归触发 Up 变体无限循环（游戏外按键失灵）。
-        ; 仅抑制同名键（键级作用域）——全局布尔会在多键同松时误挡其它键的 Up 变体（卡键），须按键判断。
+        ; 补发 up 期间钩子会捕获 Send 注入的 up，仍放行会递归触发 Up 变体（游戏外按键失灵）；
+        ; 只抑制同名键——全局布尔会在多键同松时误挡其它键的 Up 变体（卡键）
         if KeyForward.SuppressUp.Has(pureKey)
             return HotkeyService._TraceEval(hotkeyName, pureKey, evalStart, false)
         if KeyForward.DownHandled.Has(pureKey)
@@ -30,8 +23,7 @@ HotkeyContext(hotkeyName) {
     ; 鼠标键/滚轮：悬停判定
     if (pureKey ~= "i)^(lbutton|rbutton|mbutton|xbutton1|xbutton2|wheel)")
         return HotkeyService._TraceEval(hotkeyName, pureKey, evalStart, IsMouseInClient())
-    ; 键盘键：优先使用热路径廉价校验（前台 hwnd→pid 与缓存比对）；
-    ; 缓存未命中时回退旧语义并投递异步补识别，不在判定线程内做重 IO。
+    ; 键盘键：优先走热路径廉价校验（前台 hwnd→pid 与缓存比对），未命中才回退旧语义并异步补识别
     if GameTarget.IsForegroundCached()
         return HotkeyService._TraceEval(hotkeyName, pureKey, evalStart, true)
     if WinActive(GameTarget.WinTitle()) {
@@ -46,8 +38,7 @@ class HotkeyService {
     ; 热键状态
     static HotkeyState := true
 
-    ; 失焦悬停路径下等待游戏窗口激活的超时（#340）：该等待期线程不可中断，
-    ; 必须显著小于系统低级钩子超时（LowLevelHooksTimeout 默认 300ms），否则会累计钩子超时。
+    ; 失焦悬停路径等待窗口激活的超时：该等待期线程不可中断，必须显著小于系统低级钩子超时（默认 300ms）
     static ActivateTimeoutMs := 200
 
     ; 游戏失焦悬停操作开关（由 SettingsService 在保存/应用后刷新）
@@ -61,8 +52,8 @@ class HotkeyService {
         return this._HoverOperate
     }
 
-    ; HotkeyContext 的统一出口：记录单次求值耗时（ctxEval），并原样回传递给调用方的判定结果。
-    ; 热路径预算：每次判定只多两次 QPC 读点（频率已由 Qpc() 内部 static 缓存）。
+    ; HotkeyContext 的统一出口：记录单次求值耗时（ctxEval）并原样回传判定结果；
+    ; 热路径只多两次 QPC 读点（频率已由 Qpc() 内部缓存）
     static _TraceEval(hotkeyName, pureKey, evalStart, matched) {
         elapsedMs := QpcMs(Qpc() - evalStart)
         if (elapsedMs >= 0) {
@@ -88,14 +79,12 @@ class HotkeyService {
     static _EvalCount := 0
     static _EvalTotalMs := 0.0
     static _EvalMaxMs := 0.0
-    static EvalWarnThresholdMs := 50    ; 单次 HotIf 求值超过此值记 WARN（阈值 50ms，远离系统钩子超时红线）
+    static EvalWarnThresholdMs := 50    ; 单次 HotIf 求值超过此值记 WARN（远离系统钩子超时红线）
     static _NextEvalWarnTick := 0
     static _TelemetryWarnCooldownMs := 10000
 
-    ; 键位集合变更后通知探针立即重建监视表。
-    ; 必须即时：定时刷新间隔 5s，而 HotkeyOff/EnableByTab 会立刻清空 ActiveHotkeys；
-    ; 若探针在此期间仍盯着已注销的键，就会为一次"本不该有回调"的按下建档，宽限期后误报未触发。
-    ; 直接调用而非发事件：只有探针一个消费者，发事件会让"热键已重建"与"探针开始监视"的先后不确定。
+    ; 键位集合变更后通知探针立即重建监视表（定时刷新要等 5s，空窗期内会误报未触发）；
+    ; 直接调用而非发事件——只有探针一个消费者，发事件会让两侧先后顺序不确定
     static _NotifyWatchKeysChanged() {
         HookHealth.RefreshWatchKeysNow()
     }
@@ -106,8 +95,7 @@ class HotkeyService {
         HotkeyService._SubscribeEvents()
     }
 
-    ; 由 Schema + ActionBindings 生成 ActionCallbacks：
-    ; 行为标志只维护在 HotkeySchema，动作函数引用只维护在 ActionBindings。
+    ; 由 Schema + ActionBindings 生成 ActionCallbacks（行为标志只在 HotkeySchema，函数引用只在 ActionBindings）
     static _BuildActionCallbacks() {
         this.ActionCallbacks := Map()
         for item in HotkeySchema.Items {
@@ -173,8 +161,7 @@ class HotkeyService {
 
     ; 处理 UI 标签页切换请求
     static _HandleActiveTabChangeRequested(data) {
-        ; “其他设置”页与“自定义按键”页是管理型标签页，不改变热键组/不重建热键
-        ; （自定义按键的生效范围由其“按键类型”决定，与所在标签页无关）
+        ; “其他设置”/“自定义按键”是管理型标签页，不改变热键组；自定义按键的生效范围由其“按键类型”决定
         if (data.tabName = "other" || data.tabName = "customKeys")
             return
         this._ActiveTab := data.tabName
@@ -264,29 +251,23 @@ class HotkeyService {
     ; 已激活启用/禁用热键快捷键
     static ActiveSwitchHotkey := ""
 
-    ; 包装动作回调（#213）：游戏失焦时鼠标悬停游戏即可操作——执行动作前激活游戏窗口（超时跳过）。
-    ; 激活后不恢复原窗口（焦点留在游戏，由用户自行切换回，避免焦点闪回影响观感）。
-    ; 判定层（HotkeyContext）负责判定触发，此处负责副作用（焦点切换），职责分离。
-    ; 用嵌套函数（闭包）捕获 fn 作为 Hotkey 回调（AHK 文档：闭包可用于 Hotkey，见 Functions.htm#closures）。
-    ; fn 是函数对象——AHK v2 中函数定义即同名只读变量（含 Func 对象），ActionCallbacks 的 Fn 存的是函数引用而非字符串，可直接调用。
+    ; 包装动作回调：失焦悬停时先激活游戏窗口
+    ; 判定层只管"是否触发"，此处只管副作用；用闭包捕获 fn 作回调
     static _WrapAction(fn) {
         Wrapped(ThisHotkey) {
-            ; 整个热键线程（含 WinActivate 等待段）纳入在飞统计，
-            ; 用于观测 KeyWait 线程泄漏（#MaxThreads 默认 10，堆满即所有热键无法启动）。
+            ; 整个热键线程（含激活等待段）纳入在飞统计，用于观测线程泄漏（#MaxThreads 默认 10）
             probe := HookHealth.EnterAction(IsObject(fn) ? fn.Name : fn, KeyForward.PureKeyName(ThisHotkey))
             try {
-                ; 防御性检查：游戏窗口不存在则跳过（正常触发路径已由判定层保证存在，此处防异常阻塞）
+                ; 防御性检查：窗口不存在则跳过（正常路径已由判定层保证存在）
                 if !GameTarget.Exists() {
                     Logger.Warn("Hotkey", "动作跳过：目标游戏窗口不存在（key=" KeyForward.PureKeyName(ThisHotkey) "）")
                     return
                 }
-                ; #340：WinActivate/WinWaitActive 期间线程不可中断（misc/Threads.htm 明确列出），
-                ; 而此处每次热键都会执行，等待期主线程无法为钩子求值 HotIf，是钩子超时的第二大来源。
-                ; 游戏已在前台时（绝大多数触发）直接跳过激活；仅失焦悬停路径才等待，
-                ; 且超时压到 200ms，保证单次不可中断窗口不触及系统 300ms 红线。
+                ; WinActivate/WinWaitActive 期间线程不可中断，等待期无法为钩子求值 HotIf，
+                ; 是钩子超时的第二大来源。故前台时直接跳过激活，仅失焦路径等待且超时压到 200ms
                 if !GameTarget.IsActive() {
                     GameTarget.Activate()
-                    ; 激活超时（游戏窗口异常不可激活）则跳过动作，避免按键发往非游戏窗口
+                    ; 激活超时则跳过动作，避免按键发往非游戏窗口
                     if !GameTarget.WaitActive(HotkeyService.ActivateTimeoutMs) {
                         Logger.Warn("Hotkey", "动作跳过：激活游戏窗口超时（key=" KeyForward.PureKeyName(ThisHotkey) "）")
                         return
@@ -295,7 +276,7 @@ class HotkeyService {
                 try {
                     fn(ThisHotkey)
                 } catch Error as e {
-                    ; 记录异常而非静默——动作内部出错需可排查（此前空 catch 会掩盖动作内部真实异常）
+                    ; 记录异常而非静默，动作内部出错需可排查
                     Logger.Error("Hotkey", "动作执行失败：fn=" (IsObject(fn) ? fn.Name : fn) ", error=" e.Message)
                 }
             } finally {
@@ -305,7 +286,7 @@ class HotkeyService {
         return Wrapped
     }
 
-    ; 观测包装
+    ; 观测包装：只做在飞统计，不激活窗口（noActivate 动作的触发前提不含前台）
     static _WrapObserved(fn, label := "") {
         Wrapped(ThisHotkey) {
             probe := HookHealth.EnterAction(label != "" ? label : (IsObject(fn) ? fn.Name : fn), KeyForward.PureKeyName(ThisHotkey))
@@ -318,8 +299,8 @@ class HotkeyService {
         return Wrapped
     }
 
-    ; 注册单个热键（数据驱动：profile.OnUp=功能在松开时触发；profile.Guarded=拦截键注册 Up 变体补发透传）
-    ; 注意：属性访问用 HasOwnProp 判断——profile 无 OnUp/Guarded 属性时直接访问会抛 PropertyError
+    ; 注册单个热键（profile.OnUp=松开时触发；profile.Guarded=拦截键需注册 Up 变体补发透传）。
+    ; 行为标志用 HasOwnProp 判断——直接访问不存在的属性会抛 PropertyError
     static _RegisterOne(hotkeyValue, profile, pattern) {
         callback := profile.HasOwnProp("NoActivate")
             ? this._WrapObserved(profile.Fn)
@@ -335,8 +316,8 @@ class HotkeyService {
         reg := intercept ? hotkeyValue : "~" hotkeyValue
         Hotkey(reg, callback, "On")
         HotkeyService.ActiveHotkeys.Set(reg, reg)
-        ; 有守卫的拦截键（非滚轮）：注册 Up 变体，松开时由 KeyForward.ActionUpForward 补发 key up
-        ; 注意：类静态方法引用需 Bind(KeyForward)——方法的 MinParams 含 self，直接传引用 Hotkey 回调验证会失败（Invalid callback function）
+        ; 有守卫的拦截键（非滚轮）：注册 Up 变体，松开时由 KeyForward.ActionUpForward 补发 key up。
+        ; 类静态方法必须 Bind(KeyForward)——方法的 MinParams 含 self，直接传引用会报 Invalid callback function
         if (profile.HasOwnProp("Guarded") && intercept && !InStr(hotkeyValue, "Wheel")) {
             Hotkey(hotkeyValue " Up", KeyForward.ActionUpForward.Bind(KeyForward), "On")
             HotkeyService.ActiveHotkeys.Set(hotkeyValue " Up", hotkeyValue " Up")
@@ -492,8 +473,7 @@ class HotkeyService {
         }
     }
 
-    ; 内部：注册指定生效组的自定义按键（"all" | "combatQuick" | "strongHoldProtocol"；
-    ; group="all" 的条目任何调用都会注册）
+    ; 内部：注册指定生效组的自定义按键（"all" | "combatQuick" | "strongHoldProtocol"）
     static _EnableCustomGroup(group) {
         HotIf(HotkeyContext)
         pattern := GameKeys.GetInterceptPattern()
