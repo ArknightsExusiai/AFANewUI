@@ -21,6 +21,7 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
   2. `OnError` 全局回调 —— 运行时错误先写文件（或 `FileAppend("...", "*")` 写 stdout）再 **`return 1`** 抑制默认错误弹窗（返回 `0`/空串仍会弹窗；`ExitApp` 亦可，但要确保先写完）。
   3. 主流程 `try/catch` 兜住自身逻辑异常。
   运行与取错：`AutoHotkey64.exe /ErrorStdOut "脚本.ahk" > out.txt 2> err.txt`（`/ErrorStdOut` 命令行开关与指令等价但对编译后的 exe 无效；stderr 即错误文本，WSL 侧可直接读取；AHK 非控制台程序，stdout/stderr 必须靠重定向或管道捕获）。只想校验能否加载而不执行时加 `/Validate`（见 `docs/ahk_docs/lib/_ErrorStdOut.htm`、`docs/ahk_docs/Scripts.htm#ErrorStdOut`）。
+- **改到探针/热键链路时跑 `test/scripts/runtime_probe_test.ahk`**：AHK 的函数与方法名**只在调用时解析**，未定义函数、缺失方法、被短路绕过的检查都能通过 `/Validate` 与 smoke_test。本项目已两次因此把缺陷送进 PR（方法群被删→启动即报 `no method named "Start"`；结算路径调用未定义的 `IsMouseKey`→只在生产炸）。运行方式同 smoke_test，成功输出 `PASS: runtime probe checks`。
 - **不使用 worktree 开发**；提前查看 `.gitignore` 确认哪些更改不需要 commit（`CONTEXT.md`、`docs/adr`、`docs/architecture`、`docs/plan` 是本地文件，勿当作共享文档编辑）。
 - **Git 操作全由用户自行进行**：用户没要求就不要 commit、不要 push、不创建 PR、不创建或改变 branch。用户要求提交时，对 diff 详细分类并分开提交，标题与描述通顺易懂。
 - **翻译前先从 `docs/i18n/glossary.md` 取游戏术语官方译法**，再动手翻译。
