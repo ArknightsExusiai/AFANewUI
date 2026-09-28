@@ -1,7 +1,6 @@
 ; == 游戏客户端实例注册表 ==
-; 负责枚举运行中的 Arknights.exe 实例、维护 PID→区服缓存、仲裁前台客户端，
-; 并发布 GameClientsChanged / ForegroundClientChanged 事实事件。
-; 枚举/路径查询是慢路径，只允许在定时器或事件线程中调用；热键路径不得进入本模块的 IO 方法。
+; 枚举运行中的 Arknights.exe 实例、维护 PID→区服缓存、仲裁前台客户端并发布事实事件；
+; 枚举/路径查询是慢路径，热键路径不得进入本模块的 IO 方法。
 
 class GameClientRegistry {
 
@@ -13,9 +12,9 @@ class GameClientRegistry {
     static _LastClientsSignature := ""
     static _Initialized := false
     static _RefreshScheduled := false
-    static _RefreshInProgress := false  ; 重入保护：Refresh 可由 GameMonitor 400ms 定时器 / ScheduleRefresh 一次性定时器 / Init 三入口交错调用
+    static _RefreshInProgress := false
 
-    ; 初始化（由 Bootstrap 或 GameMonitor 首次轮询前调用）
+    ; 初始化
     static Init() {
         if (this._Initialized)
             return
@@ -28,7 +27,7 @@ class GameClientRegistry {
         return this.Clients.Count > 0
     }
 
-    ; 获取客户端数组（每次返回新数组，避免外部修改内部列表）
+    ; 客户端数组（副本）
     static GetClients() {
         result := []
         for client in this.ClientList
@@ -36,14 +35,14 @@ class GameClientRegistry {
         return result
     }
 
-    ; 按 pid 查找客户端；不存在返回 ""
+    ; 按 pid 查找客户端
     static GetByPid(pid) {
         if (this.Clients.Has(pid))
             return this.Clients[pid]
         return ""
     }
 
-    ; 按 hwnd 查找客户端；不存在返回 ""
+    ; 按 hwnd 查找客户端
     static GetByHwnd(hwnd) {
         for _, client in this.Clients {
             if (client.hwnd = hwnd)
@@ -52,18 +51,18 @@ class GameClientRegistry {
         return ""
     }
 
-    ; 当前前台客户端；不存在返回 ""
+    ; 当前前台客户端
     static GetForegroundClient() {
         return this.GetByPid(this.ForegroundPid)
     }
 
-    ; 当前前台区服 id；无前台客户端时返回 ""
+    ; 当前前台区服 id
     static GetForegroundServerId() {
         client := this.GetForegroundClient()
         return client = "" ? "" : client.serverId
     }
 
-    ; 热键路径缓存未命中时，投递一次异步补识别，不在判定线程内做重 IO。
+    ; 热键路径缓存未命中时投递一次异步补识别
     static ScheduleRefresh() {
         if (this._RefreshScheduled)
             return
@@ -76,9 +75,7 @@ class GameClientRegistry {
         this.Refresh()
     }
 
-    ; 刷新客户端列表与前台客户端。由 GameMonitor 400ms 定时器调用。
-    ; 重入保护：AHK 单线程下新线程可打断正在执行的 Refresh（三入口交错），
-    ; 中途替换 Clients/ClientList 会让外层读到旧条目（缺 hwnd）或触发 Invalid memory read/write。
+    ; 刷新客户端列表与前台客户端（重入保护）
     static Refresh() {
         if (this._RefreshInProgress)
             return
@@ -106,7 +103,6 @@ class GameClientRegistry {
                 Logger.Warn("GameClientRegistry", "枚举游戏客户端失败：" e.Message)
             }
 
-            ; 比较并更新客户端集合
             if (this._ClientsChanged(newClients)) {
                 this.Clients := newClients
                 this.ClientList := []
@@ -127,7 +123,7 @@ class GameClientRegistry {
         }
     }
 
-    ; 比较两个客户端集合是否一致（不考虑对象引用，只比较字段）
+    ; 比较两个客户端集合是否一致
     static _ClientsChanged(newClients) {
         if (this.Clients.Count != newClients.Count)
             return true
@@ -169,7 +165,7 @@ class GameClientRegistry {
         }
     }
 
-    ; 获取进程路径：优先 ProcessGetPath，失败降级 WMI
+    ; 获取进程路径（ProcessGetPath 失败降级 WMI）
     static _GetProcessPath(pid) {
         try {
             path := ProcessGetPath(pid)
@@ -181,7 +177,7 @@ class GameClientRegistry {
         return this._GetProcessPathByWmi(pid)
     }
 
-    ; WMI 降级查询（与 GameLauncher 同逻辑，保持本模块独立可用）
+    ; WMI 降级查询
     static _GetProcessPathByWmi(pid) {
         try {
             wmi := ComObject("winmgmts:{impersonationLevel=impersonate}!\\.\root\cimv2")

@@ -1,19 +1,15 @@
 ; == 游戏状态监控 ==
 
 class GameMonitor {
-    ; SetTimer 需要缓存同一 bound 回调对象，才能正确启停/调速
+    ; SetTimer 需要缓存同一 bound 回调对象才能正确启停/调速
     static _CheckTimer := ""
     static _TimeoutTimer := ""
     static _PauseWaitTimer := ""
     static _PauseWaitTickTimer := ""
 
-    ; 自动暂停「等待倍速按钮」阶段参数（#340）：
-    ; 该阶段原为 while(true) 忙等——无 Sleep、无超时，只有找到按钮或游戏进程消失才退出。
-    ; 忙等期间主线程被长时间占据、HotIf 求值全部排队，
-    ; 系统据此累计低级钩子超时并最终静默摘除钩子（表现为所有热键失效）。
-    ; 改为定时器状态机：每拍只做一次小区域 PixelSearch，其余时间让出主线程。
-    static PauseWaitIntervalMs := 30    ; 轮询间隔，兼顾暂停延迟与主线程占用（原忙等≈100% 占用）
-    static PauseWaitTimeoutMs := 8000   ; 硬超时，与黑屏识别超时同量级，超时放弃本次自动暂停
+    ; 自动暂停「等待倍速按钮」阶段参数
+    static PauseWaitIntervalMs := 30
+    static PauseWaitTimeoutMs := 8000
     static _PauseWaitDeadline := 0
 
     ; 私有状态
@@ -21,7 +17,7 @@ class GameMonitor {
     static _BlackScreenDetected := false
     static _ReadyForPause := false
 
-    ; 启动监控定时器（由 Bootstrap 调用，避免顶层副作用）
+    ; 启动监控定时器
     static Start() {
         if (this._CheckTimer = "")
             this._CheckTimer := GameMonitor.CheckGameStatus.Bind(GameMonitor)
@@ -33,37 +29,34 @@ class GameMonitor {
         Logger.Debug("GameMonitor", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
     }
 
-    ; 调整主轮询定时器间隔（供内部与 hotkey_actions 复用）
+    ; 调整主轮询定时器间隔
     static SetPollInterval(interval) {
         if (this._CheckTimer = "")
             this._CheckTimer := GameMonitor.CheckGameStatus.Bind(GameMonitor)
         SetTimer this._CheckTimer, interval
     }
 
-    ; 安排/取消黑屏识别超时（同一 bound 回调，避免无法取消）
+    ; 安排/取消黑屏识别超时
     static _ScheduleTimeout(ms) {
         if (this._TimeoutTimer = "")
             this._TimeoutTimer := GameMonitor.StopSearchLoadingTimeout.Bind(GameMonitor)
         SetTimer this._TimeoutTimer, ms
     }
 
-    ; 重置游戏运行记录（由 SettingsService/Saver 在需要时调用）
+    ; 重置游戏运行记录
     static ResetRunRecord() {
         this._GameHasStarted := false
     }
 
-    ; 游戏是否曾运行过（供自动退出判断；目前仅内部使用，保留 getter 便于测试/日志）
+    ; 游戏是否曾运行过
     static IsGameHasStarted() {
         return this._GameHasStarted
     }
 
     ; 检查游戏状态
     static CheckGameStatus() {
-        ; 慢路径：刷新客户端实例与前台缓存（热键路径不调用本方法）
         GameClientRegistry.Refresh()
 
-        ; AutoExit 运行时读 INI 实际保存值（GUI 未应用修改不影响）；检测到 AutoExit 刚被应用开启时重置游戏运行记录，
-        ; 避免应用设置后立即因"游戏曾运行过"的历史记录触发自动退出
         static PrevAutoExit := ""
         autoExit := Config.ReadImportantFromIni("AutoExit")
         if (autoExit == "1" && PrevAutoExit != "1" && PrevAutoExit != "") {
@@ -72,10 +65,8 @@ class GameMonitor {
         }
         PrevAutoExit := autoExit
 
-        ; 自动退出：所有受管客户端都退出才退出 AFA
         if (autoExit == "1") {
             hasClients := GameClientRegistry.HasClients()
-            ; 枚举失败时兜底旧判断，避免误退出
             if (!hasClients && GameTarget.ProcessExists())
                 hasClients := true
             if (hasClients) {
@@ -88,12 +79,11 @@ class GameMonitor {
             }
         }
 
-        ; 自动开局暂停 / 自动开局二倍速（运行时读 INI，同 AutoExit 理由）：
-        ; 两者共用同一套进关检测状态机（黑屏→Loading→倍速按钮），任一开启即进入检测。
+        ; 自动开局暂停 / 自动开局二倍速（运行时读 INI，两者共用同一套进关检测状态机）
         autoPause := Config.ReadImportantFromIni("AutoBeginPause") == "1"
         if ((autoPause || Config.ReadImportantFromIni("AutoBeginSpeed") == "1") && GameTarget.IsActive()) {
             autoSpeed := Config.ReadImportantFromIni("AutoBeginSpeed") == "1"
-            ; 寻找黑屏：遍历 17 个全屏采样点，允许 1 个点被游戏鼠标遮挡
+            ; 寻找黑屏（17 点采样，允许 1 点被遮挡）
             if (this._BlackScreenDetected == false) {
                 points := GameMonitor.BlackScreenPoints()
                 if !points
@@ -119,7 +109,7 @@ class GameMonitor {
                         DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
                 }
             }
-            ; 识别 Loading：通过 Loading... 文字区域颜色判断场景类型
+            ; 识别 Loading（Loading... 文字区域颜色判断场景类型）
             if (this._BlackScreenDetected == true && this._ReadyForPause == false) {
                 try oldCtx := DllCall("SetThreadDpiAwarenessContext", "ptr", -3, "ptr")
                 try {
@@ -147,7 +137,6 @@ class GameMonitor {
                             Logger.Info("GameMonitor", "识别到白色 Loading，进入等待倍速按钮阶段")
                             this._ReadyForPause := true
                             this._ScheduleTimeout(0)
-                            ; 缓存同一 bound 对象（本文件既定约定），否则每次新建对象会让 SetTimer 无法取消
                             if (this._PauseWaitTimer = "")
                                 this._PauseWaitTimer := GameMonitor.ActionBeginPause.Bind(GameMonitor)
                             SetTimer this._PauseWaitTimer, -2000
@@ -161,8 +150,7 @@ class GameMonitor {
         }
     }
 
-    ; 自动开局暂停：进入「等待倍速按钮」阶段（由 Loading 识别命中后延迟 2 秒调度）
-    ; 像素/图像搜索全部走 Safe* 包装：窗口/桌面不可用时按未命中处理，不抛 OSError
+    ; 自动开局暂停：进入「等待倍速按钮」阶段
     static ActionBeginPause() {
         autoPause := Config.ReadImportantFromIni("AutoBeginPause") == "1"
         autoSpeed := Config.ReadImportantFromIni("AutoBeginSpeed") == "1"
@@ -171,20 +159,15 @@ class GameMonitor {
         this._PauseWaitTick()
     }
 
-    ; 「等待倍速按钮」单拍：命中则暂停并收尾，未命中则重新排程下一拍。
-    ; 每拍只做一次小区域 PixelSearch 后立即返回，主线程在拍间完全空闲——
-    ; 这正是替换掉原 while(true) 忙等的关键（忙等期间 HotIf 求值排队会导致系统摘除键盘钩子）。
+    ; 「等待倍速按钮」单拍：命中则暂停并收尾，未命中则重新排程下一拍
     static _PauseWaitTick() {
         try oldCtx := DllCall("SetThreadDpiAwarenessContext", "ptr", -3, "ptr")
         try {
-            ; 游戏窗口消失 → 结束等待，避免 Safe 包装按未命中处理造成无限轮询
             if !GameTarget.Exists() {
                 Logger.Warn("GameMonitor", "等待倍速按钮：等待期间游戏窗口已不存在")
                 this._ResetPauseWait()
                 return
             }
-            ; 游戏已不在前台：与 CheckGameStatus 的自动暂停前置条件保持一致。
-            ; 继续等下去只会对着遮挡窗口做像素判断，既可能误命中（凭空注入一次暂停），也白占主线程。
             if !GameTarget.IsActive() {
                 Logger.Info("GameMonitor", "等待倍速按钮：游戏已切出前台，放弃本次检测")
                 this._ResetPauseWait()
@@ -214,7 +197,7 @@ class GameMonitor {
                 GameKeys.SendUp("pauseBattle")
                 Logger.Info("GameMonitor", "自动暂停：已暂停")
             }
-            ; 为了降低暂停延迟，后置代理指挥识别，识别到是代理指挥时取消暂停
+            ; 后置代理指挥识别，识别到代理指挥时取消暂停
             isProxy := false
             TobC := TakeOverButtonPositions()
             if !TobC {
@@ -226,7 +209,7 @@ class GameMonitor {
             takeoverHit := SafeImageSearch(&OutputVarX, &OutputVarY, TobC.ImageRegion.RLX, TobC.ImageRegion.RUY, TobC.ImageRegion.RRX, TobC.ImageRegion.RDY, "*90 " FileExtractor.TakeOver1Path) || SafeImageSearch(&OutputVarX, &OutputVarY, TobC.ImageRegion.RLX, TobC.ImageRegion.RUY, TobC.ImageRegion.RRX, TobC.ImageRegion.RDY, "*90 " FileExtractor.TakeOver2Path)
             if takeoverHit
                 isProxy := true
-            ; 接管代理按钮“手”图标拇指
+            ; 接管代理按钮「手」图标拇指
             handHit := SafeImageSearch(&OutputVarX, &OutputVarY, TobC.ImageRegion.HLX, TobC.ImageRegion.HUY, TobC.ImageRegion.HRX, TobC.ImageRegion.HDY, "*90 " FileExtractor.TakeOver3Path)
             if !handHit
                 isProxy := false
@@ -241,8 +224,7 @@ class GameMonitor {
                     Logger.Info("GameMonitor", "非代理指挥，保持暂停")
                 }
             }
-            ; 开局自动二倍速：非代理作战时盲切一次倍速（进关默认 1 倍速，切一次即 2 倍速）；
-            ; 代理作战沿用游戏自动节奏不干预，与自动暂停的代理排除策略保持一致。
+            ; 开局自动二倍速：非代理作战时切一次倍速
             if (autoSpeed && !isProxy) {
                 Logger.Debug("GameMonitor", "开局自动二倍速：开始注入倍速键（自动暂停=" (autoPause ? "开" : "关") "）")
                 GameKeys.Tap("changeSpeed")
@@ -257,7 +239,7 @@ class GameMonitor {
         }
     }
 
-    ; 「等待倍速按钮」轮询回调（缓存同一 bound 对象，保证可被 SetTimer 取消/重排）
+    ; 「等待倍速按钮」轮询回调
     static _PauseWaitTimerTick() {
         if (this._PauseWaitTickTimer = "")
             this._PauseWaitTickTimer := GameMonitor._PauseWaitTick.Bind(GameMonitor)
@@ -266,7 +248,6 @@ class GameMonitor {
 
     ; 结束等待并回到常规轮询节奏
     static _ResetPauseWait() {
-        ; 连同尚未触发的 2 秒启动定时器一并取消，避免复位后又被一次陈旧调度重新拉起等待
         if (this._PauseWaitTimer != "")
             SetTimer this._PauseWaitTimer, 0
         SetTimer this._PauseWaitTimerTick(), 0
@@ -275,7 +256,7 @@ class GameMonitor {
         this.SetPollInterval(400)
     }
 
-    ; 获取 Loading... 颜色识别位置（三条水平扫描线）
+    ; 获取 Loading... 三条水平扫描线位置
     static LoadingPosition() {
         if !SafeWinGetClientPos(&ww, &wh)
             return false
@@ -292,7 +273,7 @@ class GameMonitor {
         ]
     }
 
-    ; 获取全屏 17 点黑屏采样位置（覆盖四角、四边、内部、中心）
+    ; 获取全屏 17 点黑屏采样位置
     static BlackScreenPoints() {
         if !SafeWinGetClientPos(&ww, &wh)
             return false
@@ -318,7 +299,7 @@ class GameMonitor {
         this._BlackScreenDetected := false
     }
 
-    ; 黑屏识别超时（8秒未确认 Loading 状态），停止搜索并记录提示
+    ; 黑屏识别超时（8 秒未确认 Loading 状态）
     static StopSearchLoadingTimeout() {
         Logger.Info("GameMonitor", "黑屏识别超时（8秒未确认 Loading），并非进关卡，停止搜索")
         GameMonitor.StopSearchLoading()

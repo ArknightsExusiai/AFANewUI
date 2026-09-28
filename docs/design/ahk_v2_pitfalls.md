@@ -27,6 +27,10 @@ AHK v2 的箭头函数 `(p) => expr` **只支持单一表达式，不支持 `{ }
 
 另外 `ActionCallbacks` 等 Map 里的 `Fn: ActionBack` 存的是**函数引用（Func 对象）**而非字符串——AHK v2 中函数定义即同名只读变量、其值即 Func 对象，可直接 `Fn(ThisHotkey)` 调用（`Hotkey` 回调同样接受函数对象）。AHK v2 的 `Func()` 只接受**函数名字符串**，对函数对象套 `IsObject(fn) ? fn : Func(fn)` 规范化是死代码（v1 残留认知），空 `catch` 还会掩盖动作内部真实异常（修复见 `core/hotkey/hotkey_service.ahk` 的 `_WrapAction`）。
 
+**类静态方法不能直接当回调传引用**：方法的 `MinParams` 含 `self`，`Hotkey(key, ClassName.Method, "On")` 会在回调时抛 `Invalid callback function`，必须 `.Bind(ClassName)`（`KeyForward.ActionUpForward.Bind(KeyForward)`、`HotkeyActions.ActionBack.Bind(HotkeyActions)` 均此模式）。
+
+**可选属性必须用 `HasOwnProp` 判断**：直接访问不存在的属性会抛 `PropertyError`，而 profile 上的 `Guarded`/`OnUp`/`NoActivate` 等行为标志是"存在才有意义"的可选字段——`profile.HasOwnProp("Guarded")` 而非 `profile.Guarded`。
+
 ### 回调/定时器/热键按函数对象身份匹配
 
 （`custom_key_editor.ahk` 拾取会话）
@@ -40,6 +44,12 @@ AHK v2 中它取消待触发的回调、**不调用函数**；与 `SetTimer Func
 ### 线程优先级与事件丢弃
 
 AHK 优先级规则是"**新线程优先级低于当前线程才不能中断**"，且低优先级事件按下会被**直接丢弃（not buffered）**而非排队（`misc/Threads.htm#Priority`）。`Thread "Critical"` 因能缓冲事件而优于调 Priority；`Thread "NoTimers"` 只挡定时器、放行热键。线程层面的选用原则见 [key_designs_hotkey.md](key_designs_hotkey.md#ahk-线程优先级-vs-criticalnotimers)。
+
+## 正则
+
+### 不要用 `(?s)` + `.*?` 组合
+
+部分 AHK 环境对"点修饰符 + 惰性匹配"的组合行为不一致（`changelog_format.ahk` 剥离 `<summary>` 时的实测结论）。匹配单行内容请用**字符类**（如 `<summary>[^<>]*</summary>`）而非 `(?s)<summary>.*?</summary>`。
 
 ## 数值与比较
 

@@ -4,10 +4,10 @@
 class Constants {
     static DefaultTabOrder := "keyBind,quick,strongHoldProtocol,customKeys,other"
 
-    ; 界面主题模式：唯一合法值集合与规范化规则（Config/Theme/GUI 共用，勿在别处重复定义）
+    ; 界面主题模式：唯一合法值集合与规范化规则
     static ThemeModes := ["auto", "light", "dark"]
 
-    ; 规范化主题模式：大小写不敏感，非法值回退 auto（纯函数，无外部依赖）
+    ; 规范化主题模式：大小写不敏感，非法值回退 auto
     static NormalizeThemeMode(mode) {
         mode := StrLower(mode)
         for item in this.ThemeModes
@@ -33,10 +33,10 @@ class Constants {
     ; 旧版序号→帧率文本（用于迁移和回退）
     static FrameOldIndexToText := Map("1","30", "2","60", "3","90", "4","120", "5","144", "6","165", "7","240+")
 
-    ; 按键名称映射（由 HotkeySchema 生成）
+    ; 按键名称映射
     static KeyNames := HotkeySchema.GetKeyNames()
 
-    ; 热键启用分组，同时作为冲突检测的唯一分组数据源（由 HotkeySchema 生成）
+    ; 热键启用分组，同时作为冲突检测的唯一分组数据源
     static CombatHotkeys := HotkeySchema.GetGroupMap("combat")
     static QuickHotkeys := HotkeySchema.GetGroupMap("quick")
     static StrongHoldHotkeys := HotkeySchema.GetGroupMap("strongHold")
@@ -88,7 +88,7 @@ class Constants {
         "HoverOperate", "游戏窗口未激活时允许鼠标悬停在窗口上触发热键"
     )
 
-    ; 自定义按键：单条数量上限（GUI 预建行数，两列 × 6 行，对齐常规作战页布局）与类型选项（类型码 + 显示名键，供下拉框与校验共享）
+    ; 自定义按键：单条数量上限与类型选项
     static CustomHotkeyMax := 12
     static CustomHotkeyTypeOptions := [
         {code: "global", nameKey: "全局按键"},
@@ -96,7 +96,7 @@ class Constants {
         {code: "quick", nameKey: "快捷操作类"},
         {code: "strongHold", nameKey: "卫戍协议类"}
     ]
-    ; 自定义按键功能选项（功能码 + 显示名键）：目前仅"单击"（click），未来功能在此扩展
+    ; 自定义按键功能选项（功能码 + 显示名键）
     static CustomHotkeyFuncOptions := [
         {code: "click", nameKey: "单击"}
     ]

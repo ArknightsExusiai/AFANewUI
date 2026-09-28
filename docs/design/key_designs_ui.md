@@ -2,19 +2,51 @@
 
 > AGENTS.md 参考资料分册。AGENTS.md 只保留必须遵守的铁律，本文件保留完整机制、历史与理由。
 
-## GUI 脏值对比
+## 布局链与几何契约（gui.ahk `_CreateControls`）
+
+手工硬编码布局，控件的 `y+NN` 相对"**前一个控件的底部**"（不是 `Section`）——因此**创建顺序本身就是布局契约**，插行/换序会让后续所有行的位置漂移。
+
+关键数字与规则：
+
+- **列栅格**：绑定的 Edit 固定在 `colX+155`（左列 155 / 右列 `ColWidth`+155 = 515），标签右缘固定 `colX+135` 右对齐、宽出向左延伸。
+- **帧率行**标签按**实测宽度**重定宽（`Max(90, 实测宽)` 且 `+2px` 安全余量），右缘仍固定 135——en/ko 等长文案不换行。
+- **自动暂停开关**的按键 Edit 对齐右列（`x515 w140`），复选框贴其左侧（右缘 500）。
+- **关卡守卫开关**左缘对齐"开局自动暂停"复选框，并用 `Min(cbPauseX, 708 - 实测宽)` 钳制，防超长文案越出右缘。
+- **二倍速开关**放在守卫行左列：**Edit 必须先于复选框创建**——本行最后一个控件必须是复选框，其底部是帧率提示语 `y+15` 的锚点，也是底部按钮位置的基准。
+- 「游戏路径」行标签上限 `zhW+29`（中文基准宽 +29px），**不得越过 `x131` 分隔线**；各语言的标签/编辑框列位置一致。
+- 提示文本右缘固定在内容区右缘 `x690`，宽度不随语言变化（超宽裁剪，须按语言人工验证）。
+- 卫戍协议页分两列用 **`Floor` 而非 `Ceil`**：奇数项时右列要比左列**多**一行，否则末行提示语会与左列末行重叠。自定义按键页固定 12 行预建（两列 × 6，AHK 控件无法运行时创建/销毁）。
+- 三个标签页末尾各有一行 **零高度的"空白占位"控件**（`y+-10 h0`）：它本身不显示，作用是充当下一行（底部提示语）的定位锚点——**不要当作垃圾代码删除**。同理，行内 `y+NN` 依赖的行序也不能随意调换。
+- **标签页设置的两个 Hidden 表单变量（`vTabOrder`/`vHiddenTabs`）必须放在布局链之外**，否则破坏"自定义"页左列 `y+10` 的相对定位。
+- 顶部标签创建期按**实际可见数**等分（`LayoutTopTabs()`）而不是固定 `TabWidth`，否则首显前窗口宽度按 `TabWidth × 标签数` 计算会导致顶部溢出、整窗变宽。
+
+## 标签页管理器的重绘与命中规则
+
+- **必须 `Redraw()`**：AHK 是延迟重绘，可见标签数变化后不加会在旧宽度上绘制，出现错位/缺字残影。
+- **指示线无条件重设宽度并重绘**——按"宽度未变则跳过"会在标签数变化时留下零宽指示线。
+- 位置/尺寸相同就不要 `Move`；可见性相同就不要赋值；`SetFont` 只在颜色与 `TabFontState` 记录不一致时执行——这些都是为了压掉闪烁。`TabFontState` 必须是**空 Map 起步**，保证首次 `_SetTabFontOnce` 总会 `SetFont`（键缺失视为无记录）。
+- 眼睛图标码点与"闭眼字形不可用"见 [Segoe MDL2 Assets 图标码点](#segoe-mdl2-assets-图标码点)。
+- `RegisterTabManagerMouseHandlers` **须同时监听 `WM_LBUTTONDOWN`(0x0201) 与 `WM_LBUTTONDBLCLK`(0x0203)**：窗口类带 `CS_DBLCLKS` 时双击的第二次按下发 0x0203，只听 0x0201 会漏掉该次点击。
+- 行内偏移：拖动手柄 `+9`、标签 `+40`、眼睛图标 `+201`；行的 Z 序为 背景 < 高亮 < 文字与命中控件（只调 Z 序，不动 HWND/位置/尺寸，拖动与眼睛点击依赖它们）。
+- 统计可见功能标签数（判断能否隐藏）**须读 `tabItem.Visible`（工作态）而非 `IsTabVisible()`（已应用快照）**，否则未应用时的保护不生效；`MouseGetPos` 返回**物理像素**，行坐标是**逻辑像素**，拖拽换算不可省。
+
+**`_ShowControls` 组成员关系**：自定义按键的 12 行控件**不进** `_ShowControls` 组（行显隐只由 `_RefreshCustomHotkeyRows` 按条目数控制，进组会被全量置可见、切页时闪一下），且该刷新方法**必须受当前标签页门控**——它挂在 `_UpdateTabUI` 末尾对每个标签页都执行，无条件置可见会让行在 `_HideAllControls` 之后又被显示（控件串页）。
+
+## 脏状态与窗口重建
 
 `GuiManager` 维护 `_InitialValues` 快照和 `IsModified` 标志。`CaptureInitialSnapshot()` 在设置加载/保存/应用后保存所有控件当前值，`TrackChange(key)` 在控件变更时将当前值与快照对比，同时将新值同步写入 Config 内存（热键控件和 SwitchHotkey 已由 `KeyBinder.EndChange` 提前写入，`TrackChange` 负责其余控件）。
+
+**语言切换会重建窗口**（`_OnSettingsSaved`/`_OnSettingsApplied` 的 `_LanguageChanged` 分支），该分支必须在 `Rebuild()` 之后同样执行 `SetIsModifiedFalse()` + `CaptureInitialSnapshot()`——否则保存成功后脏标志残留，重开窗口会误报"修改尚未保存或应用"并点亮保存/应用按钮。
+
+## GUI 脏值对比
 
 `UpdateSaveButtonState()` 根据 `IsModified` 和 `HasHotkeyConflicts` 决定保存/应用按钮状态。`RefreshHotkeyConflicts()` 调用 `HotkeyConflictValidator` 进行增量字体标红（仅更新冲突状态变化的控件，使用 `_PrevConflictedControls` 做 diff）。
 
 `SwitchTab()` 保留内存修改及主题预览；显式取消由 `SettingsService.Cancel()` 重载配置。
 
-**自定义按键页**：12 行预建（两列 × 6 行）（显隐 + 重写值实现增删，AHK 控件无法运行时移除）、行控件命名 `CustomHotkey{i}Key/Gear`（删除功能在编辑窗口内）、`TrackChange` 对 `CustomHotkey*Key` 委托 `TrackCustomHotkeysChange`。
+**自定义按键页**：行控件命名 `CustomHotkey{i}Key/Gear`（删除功能在编辑窗口内），`TrackChange` 对 `CustomHotkey*Key` 委托 `TrackCustomHotkeysChange`。
 
 新增可修改控件时需在 `CaptureInitialSnapshot` 中添加对应 key，并在控件事件中调用 `TrackChange`。
-
-**语言切换会重建窗口**（`_OnSettingsSaved`/`_OnSettingsApplied` 的 `_LanguageChanged` 分支），该分支必须在 `Rebuild()` 之后同样执行 `SetIsModifiedFalse()` + `CaptureInitialSnapshot()`——否则保存成功后脏标志残留，重开窗口会误报"修改尚未保存或应用"并点亮保存/应用按钮。
 
 ## 主题生命周期与预览
 
@@ -54,6 +86,10 @@ Edit 仅接管深色非客户区边框，保留原生光标、选区与滚动；
 
 Theme 生命周期与低频模式变化使用现有 Logger；绘制故障按操作去重并延后写入（`_WarnOnce` 入队 + 一次性定时器 flush），不逐帧或逐次鼠标移动记录。主题逻辑改动运行 `test/scripts/theme_test.ahk`（`Theme.Resolve`/`Normalize` 与 `Constants.NormalizeThemeMode` 纯逻辑 + 二者一致性断言，不建窗、不读注册表），再跑 `test/scripts/smoke_test.ahk`（全模块 include、零顶层副作用），通过不等同于 GUI 验收。
 
+`SafeWinGetClientPos(&ww,&wh)` 窗口不存在时返回 false（不抛 `TargetError`）；`SafePixelSearch`/`SafeImageSearch` 把 `PixelSearch`/`ImageSearch` 内部的 GDI `OSError`（搜索区域落在可见桌面外、副屏拔掉、窗口移出屏幕、锁屏/RDP 断开）按"未命中"处理并 **60 秒节流**记 Warn——失败时单次轮询会产生十余个搜索调用，逐次落盘在 `Logger.Debug` 恒持久化的前提下会刷屏。`ImageSearch` 在 AHK v2 无独立 Options 参数，容差/缩放前缀拼在 `ImageFile` 字符串内（如 `"*90 " path`），`ValueError`（图库加载失败）同样按未命中处理，资源缺失不应弹框打断监控。
+
+**抓屏必须走屏幕 DC**：`SafeCaptureClientRect()` 用 `GetDC(NULL)` + 客户区屏幕坐标 `BitBlt`，**不能用 `GetDC(hwnd)`**——DX/Unity 画面不经过窗口 GDI DC，窗口 DC 抓到的是黑屏或旧帧（`PixelSearch` 同为屏幕合成路径）。返回 BGRA 4 字节、自顶向下位图；调用方需自行切到 per-monitor DPI aware（与 `SafeWinGetClientPos` 同坐标系），并保证目标窗口即 `GameTarget`、客户区 `(0,0)` 对应位图 `(0,0)`；失败返回 false。
+
 ## key_bind.ahk 的 WM_LBUTTONDOWN 处理
 
 `OnMessage(0x0201, WM_LBUTTONDOWN)` 是进程级回调，会在所有 GUI 的 Edit 控件点击时触发。为防止非设置窗口的 Edit 控件误触发按键录制，回调开头有父窗口检查：`if (KeyBinder.ControlObj.Gui.Hwnd != GuiManager.MainGui.Hwnd) return`。
@@ -67,6 +103,20 @@ Theme 生命周期与低频模式变化使用现有 Logger；绘制故障按操�
 ## AHK v2 GUI 布局要点
 
 `xs`/`ys` 引用**最近**的 `Section`（叠加布局中会追到前一个分类的 Section 导致偏移，每组首控件应用绝对坐标如 `x160 y45`）。Text 的 `Center` 仅水平居中，文字要填满控件需去掉固定高度自适应（`hp`）而非依赖 Center。
+
+## 自定义按键编辑窗口（custom_key_editor.ahk）
+
+独立顶层 `Gui`（**不是** `MainGui`）——`KeyBinder` 的 WM_LBUTTONDOWN 父窗口检查据此自动豁免按键录制。单编辑窗口：再次打开直接切换目标行，未保存的修改丢弃。
+
+**打开期间常驻一个 8ms 拾取轮询**（`SetTimer` + `ToolTip` 显示光标处 0-1 比例坐标）与一个 `HotIf` 条件的 `LButton` 热键（无 `~`，条件命中即吞掉该次点击完成拾取，未命中则正常透传；**不要求游戏前台**，条件只对 LButton 按压求值，不在热键判定热路径预算内）。两条身份约束：`HotIf` 条件对象与 `SetTimer` 的函数对象都必须是**唯一实例**（静态属性缓存），否则注销不到、定时器永不停歇。关闭时**先置空 `GuiObj` 再 `Theme.Destroy`**，避免销毁瞬间轮询/条件回调访问已销毁 Gui 的 `Hwnd`（`Gui has no window`）。
+
+把关：`_OnSave` 校验命名（≤50 字符、禁引号/反斜杠/控制字符，与存储文件的读取约束一致）与「功能 + 坐标」（`CustomScriptEngine.Validate`），不合法弹窗拒绝且窗口保持打开。
+
+## 底部状态栏（status_bar.ahk）
+
+`StatusBarHints` 在全部控件之后创建（保证位于窗口最底）：悬停在已登记控件上时显示该控件说明，未悬停时每 `RotateIntervalMs`（10s）随机轮播引导文案，首次打开窗口显示时段问候（进程内仅一次）。说明**以中文原文为键**，显示时才 `I18n.T`（可含 `{1}`，由 `Register` 的 `argsProvider` 实时求值）；`_Hints` 表**以控件 HWND 为键**——AHK 控件对象无法运行时销毁重建，HWND 才稳定。
+
+三条易踩的耦合：① `SetTimer` 的启停必须用**同一函数对象**（`_RotateCallback`），否则定时器永不停歇；② `Init` 的时序是"先 `Register` 后 `Init`"，**故 `Init` 绝不清空 `_Hints`**，窗口重建的清理由 `Reset()` 负责；③ 双缓冲（`WS_EX_COMPOSITED`）下系统按实际 Z 序合成，指示块 `SepLine` 与末尾 1×1 白色占位 Text 重叠，必须显式 `_SetOverlayZ` 置顶，否则白点会浮在指示块上。`OnMessage(0x0200, ...)` 是进程级回调，与 `TabManager` 的同号回调按注册顺序共存，只注册一次。
 
 ## "其他设置"页面结构
 
@@ -102,7 +152,7 @@ Theme 生命周期与低频模式变化使用现有 Logger；绘制故障按操�
 
 AHK v2 是 **system DPI aware**（非 per-monitor，官方文档明确"not marked as per-monitor DPI-aware"）。`A_ScreenDPI`=主屏 DPI 是正确基准，系统对副屏做 bitmap scaling 并统一坐标——多屏不同缩放下用 `A_ScreenDPI` 换算即可，不要用 `GetDpiForWindow`。
 
-`MouseGetPos` 在 `CoordMode "Mouse","Client"` 下返回**物理像素**，而 GUI `Move()` 用**逻辑像素**（DPI 缩放），两者换算：`物理像素 * 96 / A_ScreenDPI`。
+`MouseGetPos` 在 `CoordMode "Mouse","Client"` 下返回**物理像素**，而 GUI `Move()` 用**逻辑像素**（DPI 缩放），两者换算：`物理像素 * 96 / A_ScreenDPI`。同理标签管理器里的 `TabManagerRowStartY`/`RowHeight` 是逻辑像素，拖拽命中判定必须先换算，否则 150% 等缩放下拖拽位置偏移。
 
 ## AHK Text 控件运行时改背景色不可靠
 

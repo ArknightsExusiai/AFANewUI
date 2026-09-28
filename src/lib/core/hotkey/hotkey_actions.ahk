@@ -39,8 +39,7 @@ class KeyForward {
             if ModNames.Has(StrLower(pureKey))
                 pureKey := side ModNames[StrLower(pureKey)]
         }
-        ; Hotkey 名称大小写不敏感，但 Map 键默认大小写敏感；统一字母键名称，
-        ; 避免同一物理键因首次注册拼写不同（如 Issue #240 的 a/A）而漏掉 Up。
+        ; Hotkey 名称大小写不敏感，但 Map 键默认大小写敏感；统一字母键名称，避免同一物理键因首次注册拼写不同而漏掉 Up
         return StrLower(GetKeyName(pureKey))
     }
     ; 透传原热键给游戏
@@ -100,9 +99,6 @@ class KeyForward {
         ; 防递归：Send 补发的 up 会被钩子重新捕获触发本变体，补发期间同名键直接返回
         if KeyForward.SuppressUp.Has(pureKey)
             return
-        ; 注入按下未完成（注入 down 已发、注入 up 未发）：抑制补发。物理 up 仍被本热键（无 ~）吞掉不会漏到游戏，
-        ; 游戏收到的是注入动作自管的完整按下；注入 up 由 GameKeys.SendUp 先清标记再发送，故注入 up 自身触发本回调
-        ; （SendEvent 降级路径）时标记已清除，仍会补发，不会在游戏内卡键。
         if GameKeys.IsInjectedPressPending(pureKey) {
             Logger.Debug("KeyForward", "抑制透传 Up：key=" pureKey "（注入按下未完成，避免同帧补发吞掉注入按下）")
             return
@@ -143,7 +139,7 @@ class KeyForward {
 ; == 功能实现 ==
 class HotkeyActions {
     ; ---- 长按提示（PureKeyWait 用）----
-    ; 放在类级而非 PureKeyWait 的函数级 static：函数级 static 外部不可见，诊断脚本无法断言。
+    ; 放在类级而非 PureKeyWait 的函数级 static：函数级 static 外部不可见，诊断脚本无法断言
     static HoldWarnFirstMs := 30000      ; 首次长按提示的按住时长门槛
     static HoldWarnIntervalMs := 60000   ; 之后每隔多久再提示一次
     static HoldWarnMaxPerHold := 3       ; 每键每按住周期最多提示条数
@@ -877,10 +873,6 @@ HotkeyActionsStart() {
     KeyForward._LastForwardDownTick.CaseSense := false
     GameKeys.InjectedPressKeys.CaseSense := false
     TouchInjector.Init(3, 1)
-
-    ; Client 模式下 MouseGetPos 相对“当前活动窗口”，启动时可能是托盘菜单/资源管理器。
-    ; 统一切到 Screen 取点；触控注入由 MoveFromScreen 换算成游戏客户区坐标；
-    ; MouseMove 在 Screen 模式下还原光标，不受活动窗口切换影响。
     prevMouseCoordMode := CoordMode("Mouse", "Screen")
     try {
         MouseGetPos &screenX, &screenY

@@ -117,7 +117,6 @@ class UpdateUI {
         Theme.Destroy(this.UpdateDialog)
         this.UpdateDialog := ""
         this.UpdateDialogParams := ""
-        ; UpdateDismissed 为孤儿事件，已删除；拒绝更新无需额外处理
     }
 
     ; 点击"忽略此版本"按钮
@@ -187,9 +186,9 @@ class UpdateUI {
         }
     }
 
-    ; 显示正在下载的提示（带取消按钮和进度条）
-    ; retryCount: 重试次数（0表示首次下载，1+表示重试）
-    ; reason: 上次失败的简要原因（重试时展示给用户，非空才显示）
+    ; 显示正在下载的提示
+    ; retryCount: 重试次数
+    ; reason: 上次失败的简要原因
     static ShowDownloadingDialog(retryCount := 0, reason := "") {
         ; 关闭已存在的下载对话框
         this.CloseDownloadingDialog()
@@ -203,7 +202,7 @@ class UpdateUI {
         hWnd := this.DownloadingDialog.Hwnd
         Theme.SetWindowAttribute(hWnd, Theme.DWMWA_SYSTEMBACKDROP_TYPE, Theme.DWMSBT_NONE)
 
-        ; 根据重试次数显示不同消息（reason 存在时拼入提示；窗口高度按控件实际位置动态计算）
+        ; 根据重试次数显示不同消息
         if (retryCount = 0) {
             message := I18n.T("正在下载更新，请稍候...")
         } else {
@@ -301,7 +300,7 @@ class UpdateUI {
         loaded := data.loaded
         speedBytes := data.speed
 
-        ; 更新进度条 (Range0-1000，支持0.1%精度)
+        ; 更新进度条
         try {
             if (total > 0) {
                 percentage := loaded * 1000 / total
