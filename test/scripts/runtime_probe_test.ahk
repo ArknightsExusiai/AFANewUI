@@ -494,9 +494,12 @@ try {
     HookHealth._SamplePhysicalKeys(A_TickCount)
     ProbeReset()
     CheckProbeInvariant("连续采样收尾后")
-
-    FileAppend("PASS: runtime probe checks (" PassCount " passed)`n", "*", "UTF-8")
-    ExitApp 0
+    if (FailCount = 0) {
+        FileAppend("PASS: runtime probe checks (" PassCount " passed)`n", "*", "UTF-8")
+        ExitApp 0
+    }
+    FileAppend("FAIL: runtime probe checks (" FailCount " failed, " PassCount " passed)`n", "*", "UTF-8")
+    ExitApp 1
 } catch as err {
     RuntimeFailure(err)
 }
