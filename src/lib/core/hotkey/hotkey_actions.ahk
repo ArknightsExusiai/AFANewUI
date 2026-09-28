@@ -1,27 +1,17 @@
 ; == 按键透传（守卫拦截时还原原键输入） ==
-; 状态与行为内聚为类：InterceptedKeys 记录已补发 key down 的键，Up 变体回调据此补发 key up
 class KeyForward {
     static InterceptedKeys := Map()
-    ; down 已被 AFA 主热键处理过的键（运行时标记，GuardInLevel 记录）：Up 变体据此决定是否放行补发 key up
-    ; ——覆盖守卫放行/拦截两路径的失焦/拖出卡键；游戏外主热键不触发则不记录，Up 变体不放行，物理 up 正常透传（打字不受影响）。
+    ; down 已被 AFA 主热键处理过的键：Up 变体据此决定是否放行补发 key up
     static DownHandled := Map()
-    ; 补发 up 期间的递归抑制记录（按键级，pureKey→true）：ActionUpForward 的 Send 补发会被钩子重新捕获触发同名 Up 变体，
-    ; 若继续放行会无限循环（导致游戏外按键失灵）。仅抑制正在补发的同名键，不误挡同时松开的其它键——
-    ; 全局布尔会把其它键的物理 Up 也挡掉（HotkeyContext 条件失败→被吞→卡键，见多键同松竞态）。
+    ; 补发 up 期间的递归抑制记录
     static SuppressUp := Map()
-    ; 守卫拦截日志节流：滚轮等无 down/up 状态的事件每次独立滚动都走拦截路径（不写 InterceptedKeys，无按键去重），
-    ; 无极/高分辨率滚轮可达数百次/秒——若逐条 Info 落盘会形成"每档位一次文件 IO"的洪峰，
-    ; 拖慢主线程并刷爆日志轨（15MiB）。按 100ms 时间窗去重（普通键维持 InterceptedKeys 原去重语义，不在此限流）。
+    ; 守卫拦截日志节流
     static GuardLogIntervalMs := 100
     static _GuardLogNextTick := 0
-    ; 记录每个键上一次成功补发 up 的时刻，用于识别"同一按住周期内出现极短间隔二次补发"。
-    ; 判定窗口必须显著窄于正常快速连击的间隔（通常在 100ms 以上），
-    ; 且以"期间是否再次发生真实按下"区分先后两个按住周期——
-    ; 否则正常连击会被误判为防递归护栏漏拍（日志误报、刷爆 critical 轨）。
+    ; 记录每个键上一次成功补发 up 的时刻，用于识别"同一按住周期内出现极短间隔二次补发"
     static ReentryWindowMs := 50
     static _LastForwardTick := Map()
-    ; 每个键最近一次"真实按下"的时刻（GuardInLevel / ForwardOriginalKey 记录）：
-    ; 回环判定要求两次补发之间没有新按下，否则就是两个正常按住周期，不算异常
+    ; 每个键最近一次"真实按下"的时刻
     static _LastForwardDownTick := Map()
 
     ; 判定当前时刻是否应记录守卫拦截日志：窗口内最多一条，窗口自然滑动，无需主动清理状态
@@ -53,17 +43,7 @@ class KeyForward {
         ; 避免同一物理键因首次注册拼写不同（如 Issue #240 的 a/A）而漏掉 Up。
         return StrLower(GetKeyName(pureKey))
     }
-    ; 透传原热键给游戏（守卫拦截时调用，只拦 AFA 功能不吞原键）
-    ; - 带 ~ 前缀的热键按键本就透传，无需补发，避免重复输入
-    ; - 按下型热键：按键被 AFA 吞掉，补发 key down 并记录标志；key up 由 Up 变体热键回调（ActionUpForward）补发，事件驱动无阻塞
-    ; - Up 型热键（松开暂停）：非拦截键带 ~ 前缀，down 未被吞；被拦截键会被 AHK 整键接管（Hotkeys.htm：
-    ;   "An Up hotkey without a normal/down counterpart hotkey will completely take over that key"）——
-    ;   **down 也被吞**，且 Up 型热键没有 Down 热键给透传机会，故此处须补发完整按下（down→delay→up），
-    ;   否则关卡外该键输入整次丢失（如"松开时暂停"绑定 Space 后无法输入空格）
-    ; - 滚轮等无 down/up 状态的事件：直接发送完整事件（同 action 尾部 Wheel 处理）
-    ; - {Blind}：默认 Send 会临时改写 CapsLock（SetStoreCapsLockMode 默认开启）并释放-重注入物理按住的修饰键，
-    ;   透传的注入事件会被按“小写/无修饰”翻译——大写锁定开启或按住 Shift 时游戏收不到物理状态对应的字符；
-    ;   Blind 保持两者状态不变，注入即物理状态的忠实镜像（与直接按键产生的输入完全一致）
+    ; 透传原热键给游戏
     static ForwardOriginalKey(ThisHotkey) {
         if (ThisHotkey == "")
             return
@@ -74,9 +54,6 @@ class KeyForward {
         if (pureKey == "")
             return
         ; 滚轮：无 down/up 状态，直接发送完整事件
-        ; 注入改用原生 mouse_event：AHK Send 注入的滚轮事件带 KEY_IGNORE_LEVEL(0) 标记（0xFFC3D44D），
-        ; 部分用户环境的输入监听组件会对此标记做出响应（如系统提示音）；mouse_event 走同一输入队列
-        ; 但无该标记，且 {Blind} 语义天然满足（不触碰修饰键状态，不夺焦点）。
         if InStr(pureKey, "Wheel") {
             hw := 0
             if (pureKey = "WheelUp")
@@ -95,8 +72,6 @@ class KeyForward {
             return
         }
         if isUp {
-            ; InterceptedKeys 记录"down 已补发"：常规 Down 型热键的 down 已由主热键透传，只补发 up；
-            ; 无记录说明 down 从未到达游戏（AHK 对无 ~ 的 Up 热键整键接管吞掉了 down）——补发完整按下。
             if !this.InterceptedKeys.Has(pureKey)
                 Send "{Blind}{" pureKey " Down}"
             Send "{Blind}{" pureKey " Up}"
@@ -105,7 +80,7 @@ class KeyForward {
         ; 长按自动重复期间只保留一组逻辑 Down/Up。
         if this.InterceptedKeys.Has(pureKey)
             return
-        ; 记录真实按下时刻（回环判定的周期分隔依据，见 ActionUpForward）
+        ; 记录真实按下时刻
         this._LastForwardDownTick[pureKey] := A_TickCount
         this.InterceptedKeys[pureKey] := true
         try {
@@ -117,19 +92,12 @@ class KeyForward {
         }
     }
     ; Up 变体热键统一回调：被拦截的键松开时一律补发 key up
-    ; 原因：AHK Send 对物理按住的修饰键会做“释放-重注入”（Send.htm：默认 Send 等价 {Blind}{Ctrl up}x{Ctrl down}），
-    ; 而被拦截（无 ~）的修饰键物理 up 也被吞；若只在 ForwardOriginalKey 置位时才补发 up，
-    ; 关卡内路径（动作正常执行、未走透传）会漏掉 Up，导致修饰键在 OS 层卡住（如 GameSpeed=<SHIFT）。
-    ; 补发对未按下的键是无害 no-op，故无条件补发（不再依赖 InterceptedKeys 标志）；
-    ; 唯一抑制条件：该键处于“注入按下未完成”窗口（GameKeys.InjectedPressKeys）——注入动作自管完整按下
-    ; （注入 down→up）时，物理松开的补发 up 若与注入 down 落在同一画面帧，游戏的帧开头轮询只读到 up，
-    ; 注入的按下整次丢失（见 AGENTS.md“帧开头轮询”知识点）。{Blind} 理由同 ForwardOriginalKey。
     static ActionUpForward(ThisHotkey) {
         pureKey := this.PureKeyName(ThisHotkey)
         HookHealth.NoteFire(pureKey)
         if (pureKey == "")
             return
-        ; 防递归：Send 补发的 up 会被钩子重新捕获触发本变体，补发期间同名键直接返回（键级作用域，不挡其它键）
+        ; 防递归：Send 补发的 up 会被钩子重新捕获触发本变体，补发期间同名键直接返回
         if KeyForward.SuppressUp.Has(pureKey)
             return
         ; 注入按下未完成（注入 down 已发、注入 up 未发）：抑制补发。物理 up 仍被本热键（无 ~）吞掉不会漏到游戏，
@@ -139,10 +107,6 @@ class KeyForward {
             Logger.Debug("KeyForward", "抑制透传 Up：key=" pureKey "（注入按下未完成，避免同帧补发吞掉注入按下）")
             return
         }
-        ; 同一按住周期内的极短间隔二次补发 = 防递归护栏可能漏了一拍（注入的 up 又触发了本变体）。
-        ; 注意"期间是否又发生了一次真实按下"：若在两次补发之间有新的 down 事件（GuardInLevel/ForwardOriginalKey
-        ; 会记录 _LastForwardDownTick），则它们是两个正常按住周期——快速连击即属此类，不判回环。
-        ; 仅当窗口内无新 down 的连续补发才判疑似异常，日志级别用 DEBUG（不进 critical 轨）。
         prevTick := this._LastForwardTick.Has(pureKey) ? this._LastForwardTick[pureKey] : 0
         if (prevTick != 0 && A_TickCount - prevTick <= this.ReentryWindowMs && this._LastForwardDownTick.Has(pureKey)) {
             if (this._LastForwardDownTick[pureKey] < prevTick) {
@@ -156,14 +120,10 @@ class KeyForward {
         KeyForward.SuppressUp[pureKey] := true
         try {
             Send "{Blind}{" pureKey " Up}"
-            ; 关卡内路径未走 ForwardOriginalKey，flag 不存在；Delete 对不存在的键会抛 UnsetItemError，需先检查
             if (this.InterceptedKeys.Has(pureKey))
                 this.InterceptedKeys.Delete(pureKey)
             if (KeyForward.DownHandled.Has(pureKey))
                 KeyForward.DownHandled.Delete(pureKey)
-            ; 透传日志按"按下→松开"配对合并为一条（Down 不再单独记录），
-            ; 降低 DEBUG 恒持久化后透传路径的逐键写入量；按下已由动作执行/守卫拦截日志兜底。
-            ; 按住时长来自 _LastForwardDownTick（GuardInLevel/ForwardOriginalKey 记录的真实按下时刻）。
             downTick := this._LastForwardDownTick.Get(pureKey, 0)
             if (downTick != 0)
                 Logger.Debug("KeyForward", "透传 key=" pureKey "（按住 " (A_TickCount - downTick) "ms）")
@@ -172,10 +132,6 @@ class KeyForward {
         } catch Error as e {
             Logger.Exception("KeyForward", e, "透传 Up 失败：key=" pureKey)
         } finally {
-            ; Delete 对不存在的键会抛 UnsetItemError（AGENTS.md 已记录该陷阱）。
-            ; 前置 Has 检查与 Delete 不是原子操作：若检查通过后线程被中断、
-            ; 另一线程（如 HotkeyOff 的 SuppressUp.Clear 重建）清掉该键，Delete 仍会抛错，
-            ; 在 finally 中掩盖 try 内的真实错误——故直接以 try/catch 包住删除，容忍键不存在。
             try {
                 KeyForward.SuppressUp.Delete(pureKey)
             } catch UnsetItemError {
@@ -195,8 +151,6 @@ class HotkeyActions {
     static HoldWarnCount := Map()        ; 每键本按住周期已提示次数
     static HoldWarnTick := Map()         ; 每键上次提示时刻
 
-    ; 是否应就"等待物理松开过久"提示一次（节流：首条门槛 + 间隔 + 每周期上限）；
-    ; 需要提示时顺手记一次并返回 true，调用方据此落 WARN。
     static NoteHoldWarn(pureKey, heldMs) {
         if (heldMs < this.HoldWarnFirstMs)
             return false
@@ -211,9 +165,7 @@ class HotkeyActions {
         return true
     }
 
-    ; 按住周期结束：清掉该键的提示计数与节流时间戳。
-    ; 两者必须一起清：间隔节流是"同一次按住内不刷屏"的手段；时间戳若跨周期保留，
-    ; 上一次按住的提示会压住下一次按住的**首条**提示（同样按住 30s 却不再报警）。
+    ; 按住周期结束：清掉该键的提示计数与节流时间戳
     static ResetHoldWarn(pureKey) {
         if (this.HoldWarnCount.Has(pureKey)) {
             try this.HoldWarnCount.Delete(pureKey)
@@ -276,15 +228,15 @@ class HotkeyActions {
         PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
-    ; 前进16ms
+    ; 前进档位1，原先为前进16ms，现可自定义
     static Action16ms(ThisHotkey) {
         this._FrameSkip("Action16ms", "FrameSkip16msDelay", ThisHotkey)
     }
-    ; 前进33ms，由于波动，过帧间隔设置为30ms，避免一次过两帧
+    ; 前进档位2，原先为前进33ms
     static Action33ms(ThisHotkey) {
         this._FrameSkip("Action33ms", "FrameSkip33msDelay", ThisHotkey)
     }
-    ; 前进166ms
+    ; 前进档位3，原先为前进166ms
     static Action166ms(ThisHotkey) {
         this._FrameSkip("Action166ms", "FrameSkip166msDelay", ThisHotkey)
     }
@@ -444,7 +396,6 @@ class HotkeyActions {
         }
         Logger.Debug("HotkeyActions", "ActionPauseSkill 执行，key=" KeyForward.PureKeyName(ThisHotkey))
         MouseGetPos &xpos, &ypos
-        ; NoTimers 挡定时器轮询的时序干扰，允许其他热键中断（Critical 会连热键一起挡）
         Thread "NoTimers"
         TouchInjector.Tap(PosL.PBLX, PosL.PBLY)
         TouchInjector.Tap(xpos, ypos)
@@ -483,7 +434,6 @@ class HotkeyActions {
         }
         Logger.Debug("HotkeyActions", "ActionPauseRetreat 执行，key=" KeyForward.PureKeyName(ThisHotkey))
         MouseGetPos &xpos, &ypos
-        ; NoTimers 挡定时器轮询的时序干扰，允许其他热键中断（Critical 会连热键一起挡）
         Thread "NoTimers"
         TouchInjector.Tap(PosL.PBLX, PosL.PBLY)
         TouchInjector.Tap(xpos, ypos)
@@ -523,7 +473,6 @@ class HotkeyActions {
         }
         Logger.Debug("HotkeyActions", "ActionSwitchView 执行，key=" KeyForward.PureKeyName(ThisHotkey))
         MouseGetPos &xpos, &ypos
-        ; NoTimers 挡定时器轮询的时序干扰，允许其他热键中断（Critical 会连热键一起挡）
         Thread "NoTimers"
         TouchInjector.Tap(PosL.PBLX, PosL.PBLY)
         TouchInjector.Tap(xpos, ypos)
@@ -595,7 +544,6 @@ class HotkeyActions {
     ; 返回上级菜单
     static ActionBack(ThisHotkey) {
         Logger.Debug("HotkeyActions", "ActionBack 执行，key=" KeyForward.PureKeyName(ThisHotkey))
-        ; ESC 同帧竞态防护：ESC 也在拦截正则内（守卫热键绑定 ESC 时），物理松开的补发 up 与注入 down 同帧会丢失按下
         GameKeys.MarkInjectedPress("Escape")
         Send "{ESC Down}"
         ; 勾选"使用“返回上级菜单”放弃行动"时，ESC 后补发 battleLeftPopup（还原旧版放弃行动行为）
@@ -732,7 +680,6 @@ class HotkeyActions {
             return
         }
         Logger.Debug("HotkeyActions", "ActionStrongHoldProtocolOneClickRetreat 执行，key=" KeyForward.PureKeyName(ThisHotkey))
-        ; NoTimers 挡定时器轮询的时序干扰，允许其他热键中断（Critical 会连热键一起挡）
         Thread "NoTimers"
         Send "{LButton Down}"
         Send "{LButton Up}"
@@ -791,16 +738,11 @@ class HotkeyActions {
 
 ; == 工具函数 ==
 ; 去除修饰符前缀
-PureKeyWait(ThisHotkey, waitIntervalMs := 3000) {
-    ; waitIntervalMs：分段采样间隔，默认 3000ms（生产路径一律用默认值）
+PureKeyWait(ThisHotkey, waitIntervalMs := 3000) {    ; waitIntervalMs：分段采样间隔，默认 3000ms
     if (ThisHotkey == "")
         return
     pureKey := KeyForward.PureKeyName(ThisHotkey)
-    ; 分段等待，语义与原 KeyWait(pureKey) 完全一致（仍然无限等待物理松开），只增加观测。
-    ; KeyWait 默认等待的是**物理**释放，而物理状态由键盘钩子维护（ahk_docs/lib/KeyWait.htm）——
-    ; 钩子一旦被系统摘除，此处会永久挂起，动作线程堆满 #MaxThreads(默认 10) 后所有热键都无法启动。
-    ; 注意"按住超过 3 秒"（按下暂停/按住瞄准等）是正常操作，非异常——观测用 DEBUG，
-    ; 只有持续按住才逐步升级采样，避免正常长按把 WARN 轨（5 MiB critical）刷爆。
+    ; 分段等待
     static LastLogTick := Map()
     static LogIntervalMs := 500
     idx := 0
@@ -825,13 +767,9 @@ PureKeyWait(ThisHotkey, waitIntervalMs := 3000) {
     HotkeyActions.ResetHoldWarn(pureKey)
 }
 ; 关卡守卫：在关卡内返回 true；拦截时透传原键并记录日志，返回 false
-; 判定依据：LevelDetector 投票状态机维护的 LevelDetector.IsInLevel()（读内存标志，无像素检测、无 DPI 切换）
-; 守卫关闭（InLevelGuard=0）时 LevelDetector 停止轮询并强制 InLevel=true，此处直接放行，无 I/O
-; 拦截是预期行为（非异常），用 Info 级别避免刷 critical 轨（WARN/ERROR 5 MiB 留给真正的问题）
 GuardInLevel(actionName, ThisHotkey) {
     pureKey := KeyForward.PureKeyName(ThisHotkey)
-    ; 主热键（down）触发即记录该键已被 AFA 处理，Up 变体据此决定补发 up；Up 变体（含 OnUp 型）不记录；
-    ; PureKeyName 为空时不记录，避免 DownHandled 出现 "" 键干扰后续逻辑
+    ; 主热键（down）触发即记录该键已被 AFA 处理，Up 变体据此决定补发 up；Up 变体（含 OnUp 型）不记录
     if !RegExMatch(ThisHotkey, " Up$") && pureKey != "" {
         KeyForward.DownHandled[pureKey] := true
         ; 新的真实按下：标记"上一次补发到此为止"，避免把下一个按住周期的补发误判成回环
@@ -839,10 +777,7 @@ GuardInLevel(actionName, ThisHotkey) {
     }
     if LevelDetector.IsInLevel()
         return true
-    ; 同一按住周期的重复 down（InterceptedKeys 已有，已补发过）不再记日志，避免切走时 key repeat 刷屏；
-    ; 滚轮不写 InterceptedKeys，每次独立滚动都走拦截路径（无极/高分辨率滚轮可达数百次/秒）——
-    ; 逐条落盘会形成每档位一次文件 IO 的洪峰，故滚轮按 100ms 时间窗节流（ShouldLogGuard），
-    ; 普通键维持 InterceptedKeys 去重语义（按住周期内一条）
+    ; 同一按住周期的重复 down（InterceptedKeys 已有，已补发过）不再记日志
     isWheel := InStr(pureKey, "wheel")
     if !KeyForward.InterceptedKeys.Has(pureKey) && (!isWheel || KeyForward.ShouldLogGuard())
         Logger.Info("HotkeyActions", actionName " 被关卡检测拦截（不在关卡界面）")
@@ -943,7 +878,7 @@ HotkeyActionsStart() {
     GameKeys.InjectedPressKeys.CaseSense := false
     TouchInjector.Init(3, 1)
 
-    ; #289：Client 模式下 MouseGetPos 相对“当前活动窗口”，启动时可能是托盘菜单/资源管理器。
+    ; Client 模式下 MouseGetPos 相对“当前活动窗口”，启动时可能是托盘菜单/资源管理器。
     ; 统一切到 Screen 取点；触控注入由 MoveFromScreen 换算成游戏客户区坐标；
     ; MouseMove 在 Screen 模式下还原光标，不受活动窗口切换影响。
     prevMouseCoordMode := CoordMode("Mouse", "Screen")
