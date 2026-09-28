@@ -177,8 +177,7 @@ class HookHealth {
             this._PrevDown[vk] := isDown
             if (!isDown) {
                 ; 只要这次采样看到按键是抬起的，就刷新抬起时刻，作为新一次按下的判据基准
-                if (wasDown)
-                    this._LastUpEdge[pureKey] := now
+                this._LastUpEdge[pureKey] := now
                 continue
             }
             if (wasDown)
