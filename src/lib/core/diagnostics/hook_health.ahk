@@ -296,6 +296,7 @@ class HookHealth {
         return "idle=" A_TimeIdle ", idleKbd=" A_TimeIdleKeyboard ", idlePhys=" A_TimeIdlePhysical
             . ", fire=" this._FireTotal ", miss=" this._MissTotal "/" this._MissStreak
             . ", depth=" this._Depth "(max " this._MaxDepth ")"
+            . ", hold=[" HoldGuard.Snapshot() "]"
             . ", recover=" this._RecoverCount
             . ", ctxEval=" this._FmtMs(HotkeyService._EvalMaxMs) "/" this._FmtMs(this._AvgMs(HotkeyService._EvalTotalMs, HotkeyService._EvalCount)) "ms(max/avg, n=" HotkeyService._EvalCount ")"
             . ", probe=[" this._ProbeSnapshot() "]（arm≈cleared+miss+discard+watchDrop 为正常）"
