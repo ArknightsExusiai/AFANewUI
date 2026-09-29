@@ -12,7 +12,7 @@
 | [key_designs_hotkey.md](key_designs_hotkey.md) | 改热键/注入/按键透传/关卡检测/多区服识别时 | 多区服与热路径预算、热键注册与拦截、关卡守卫与透传、帧开头轮询、InjectedPressKeys、GameKeys、冲突检测 |
 | [key_designs_base.md](key_designs_base.md) | 改配置/日志/诊断/更新/发布链路时 | Constants、Logger、调试控制台、Config 读写分离、EventBus 约定、自动开局暂停、双源更新、chcp 陷阱、钩子健康探针 |
 | [key_designs_ui.md](key_designs_ui.md) | 改 GUI 布局/主题/标签页/坐标换算时 | 脏值对比、主题生命周期、深色绘制与 Win32 边界、DPI 换算、Text 背景色、标签页管理器 |
-| [hold_guard.md](hold_guard.md) | 改热键按住语义、`PureKeyWait`、`KeyForward` 透传状态，或排查「某键按了没反应 / 另一个键按住时本键失灵」时 | 按住按住去重状态机、结束按住周期的三条路径、issue #286 完整时间线、已证伪的假说（含「KeyWait 无害」「注入可构造物理长按」） |
+| [hold_guard.md](hold_guard.md) | 改热键按住语义、`PureKeyWait`、`KeyForward` 透传状态，或排查「某键按了没反应 / 另一个键按住时本键失灵」时 | 按住去重状态机、结束按住周期的三条路径、issue #286 完整时间线、已证伪的假说（含「KeyWait 无害」「注入可构造物理长按」） |
 | [input_stall_diagnosis.md](input_stall_diagnosis.md) | 遇到「Windows 卡住 / 游戏正常」、怀疑输入被拦/被吞、要读 HookHealth 快照时 | 判读顺序（钩子超时值 → 外设/宏软件进程 → 钩子链 → 才怀疑 AFA）、诊断包取证、已证伪的假说、自愈的副作用 |
 | [ahk_v2_pitfalls.md](ahk_v2_pitfalls.md) | 写任何 AHK 代码前（危险项已在 AGENTS.md 铁律速查） | AHK v2 语言/API 陷阱合集：删除类异常、File.Read、箭头函数、函数对象身份、数值比较、`..`、DropDownList |
 | [i18n.md](i18n.md) | 新增或修改任何用户可见文案时 | source-as-key 约定、资源表与 19KB 拆分、回退链、保持中文不译清单、控件宽度自适应、五语言验证 |
