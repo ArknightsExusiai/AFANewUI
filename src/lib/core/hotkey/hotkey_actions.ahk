@@ -219,13 +219,6 @@ class HoldGuard {
         this._Tails[pureKey] := fn
     }
 
-    ; 注册按住周期开始时执行的回调
-    static RegisterOnDown(pureKey, fn) {
-        if (pureKey = "")
-            return
-        this._OnDown[pureKey] := fn
-    }
-
     ; 物理抬起
     static EndHoldMs(pureKey, reason := "up") {
         if (pureKey = "" || !this._Holds.Has(pureKey))
@@ -284,18 +277,6 @@ class HoldGuard {
         return (parts = "" ? "(无)" : parts)
     }
 
-    static _RunOnDown(pureKey) {
-        if !this._OnDown.Has(pureKey)
-            return
-        fn := this._OnDown[pureKey]
-        this._OnDown.Delete(pureKey)
-        try {
-            fn()
-        } catch Error as e {
-            Logger.Exception("HoldGuard", e, "按住周期开始回调失败：key=" pureKey)
-        }
-    }
-
     static _RunTail(pureKey) {
         if !this._Tails.Has(pureKey)
             return
@@ -350,8 +331,6 @@ class HoldGuard {
             }
             if !this._PhysDown.Has(pureKey) {
                 this._PhysDown[pureKey] := isDown
-                if isDown
-                    this._RunOnDown(pureKey)
                 continue
             }
             prevDown := this._PhysDown[pureKey]
@@ -710,9 +689,8 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        pureKey := KeyForward.PureKeyName(ThisHotkey)
-        HoldGuard.RegisterOnDown(pureKey, (*) => Send("{LButton Down}"))
-        HoldGuard.RegisterTail(pureKey, (*) => Send("{LButton Up}"))
+        Send "{LButton Down}"
+        HoldGuard.RegisterTail(KeyForward.PureKeyName(ThisHotkey), (*) => Send("{LButton Up}"))
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 放弃行动
