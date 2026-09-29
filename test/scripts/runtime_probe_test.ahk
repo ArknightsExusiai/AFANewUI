@@ -107,6 +107,12 @@ FakeAction(*) {
     FiredCount++
 }
 
+global TailFired := 0
+TailCounter(*) {
+    global TailFired
+    TailFired++
+}
+
 ProbeReset() {
     HookHealth._PrevDown := Map()
     HookHealth._Pending := Map()
@@ -312,6 +318,54 @@ try {
     HookHealth.NoteFire("")
     Eq("NoteFire 忽略空键名", HookHealth.FireTotal(), totalBefore)
 
+    ; ---- 2b. 按住去重状态机 --------------------------------------------------------
+    HoldGuard.Init()
+    HoldGuard.Stop()
+    Eq("按住周期：滚轮不参与去重", HoldGuard.ShouldGate("wheeldown") ? "gated" : "ungated", "ungated")
+    Eq("按住周期：普通键参与去重", HoldGuard.ShouldGate(SAMPLE_KEY) ? "gated" : "ungated", "gated")
+    HoldGuard.MarkUngated("space")
+    Eq("按住周期：Up 型键不参与去重", HoldGuard.ShouldGate("space") ? "gated" : "ungated", "ungated")
+    Eq("按住周期：空闲时无挂起", HoldGuard.Snapshot(), "(无)")
+    Eq("按住周期：首个按下进入新周期", HoldGuard.TryBegin(SAMPLE_KEY, "ProbeAction") ? "ignored" : "entered", "entered")
+    Eq("按住周期：同键重入被忽略", HoldGuard.TryBegin(SAMPLE_KEY, "ProbeAction") ? "ignored" : "entered", "ignored")
+    Eq("按住周期：挂起数为 1", HoldGuard.ActiveCount(), 1)
+    Eq("按住周期：物理抬起结束按住周期并返回按住时长", HoldGuard.EndHoldMs(SAMPLE_KEY) >= 0 ? "ok" : "neg", "ok")
+    Eq("按住周期：清除后同键可再次进入", HoldGuard.TryBegin(SAMPLE_KEY, "ProbeAction") ? "ignored" : "entered", "entered")
+    Truthy("按住周期：快照含挂起键与物理态", InStr(HoldGuard.Snapshot(), SAMPLE_KEY "+") && InStr(HoldGuard.Snapshot(), "phys=")
+        , "快照=" HoldGuard.Snapshot())
+
+    HoldGuard.RegisterTail(SAMPLE_KEY, TailCounter)
+    HoldGuard.EndHoldMs(SAMPLE_KEY)
+    Eq("按住周期：关闭时执行收尾回调", TailFired, 1)
+    HoldGuard.EndHoldMs(SAMPLE_KEY)
+    Eq("按住周期：收尾回调只执行一次", TailFired, 1)
+
+    ; 兜底路径 1：物理态未知时只登记，不据此判定（登记为"抬起"时不得误清刚置位的按住周期）
+    HoldGuard.Stop()
+    HoldGuard.TryBegin(SAMPLE_KEY, "ProbeAction")
+    Eq("按住周期：物理态初始未知", HoldGuard._PhysDown.Has(SAMPLE_KEY) ? "seeded" : "unknown", "unknown")
+    Eq("按住周期：兜底定时器已挂上", HoldGuard._Timer = "" ? "none" : "set", "set")
+    HoldGuard.Poll()
+    Eq("按住周期：未知物理态只登记不误清", HoldGuard.ActiveCount(), 1)
+    Eq("按住周期：采样后已登记物理态", HoldGuard._PhysDown.Has(SAMPLE_KEY) ? "seeded" : "unknown", "seeded")
+
+    ; 兜底路径 2：已登记的物理态转为抬起 → 结束按住周期并记录可抑制迟到 up
+    HoldGuard._PhysDown[SAMPLE_KEY] := false
+    HoldGuard.Poll()
+    Eq("按住周期：物理态抬起即结束按住周期", HoldGuard.ActiveCount(), 0)
+    Eq("按住周期：兜底关闭标记可抑制迟到抬起", HoldGuard.WasClosedByFallback(SAMPLE_KEY) ? "suppress" : "forward", "suppress")
+    Eq("按住周期：迟到抬起标记读后即清", HoldGuard.WasClosedByFallback(SAMPLE_KEY) ? "suppress" : "forward", "forward")
+
+    ; 兜底路径 3：新按住周期不改写已登记的物理态（定时器还没采到这一轮）
+    HoldGuard.Stop()
+    HoldGuard._PhysDown[SAMPLE_KEY] := false
+    HoldGuard.TryBegin(SAMPLE_KEY, "ProbeAction")
+    Eq("按住周期：新周期不改写已登记的物理态", HoldGuard._PhysDown[SAMPLE_KEY] ? "down" : "up", "up")
+    HoldGuard.Poll()
+    Eq("按住周期：采样为抬起即结束按住周期", HoldGuard.ActiveCount(), 0)
+    Eq("按住周期：自愈后同键可再次进入", HoldGuard.TryBegin(SAMPLE_KEY, "ProbeAction") ? "ignored" : "entered", "entered")
+    HoldGuard.Stop()
+
     ; ---- 3. 键位监视表与即时刷新 ------------------------------------------------
     HookHealth.RefreshWatchKeysNow()
     Eq("监视表与已注册热键同源", HookHealth._WatchKeys.Count, HotkeyService.ActiveHotkeys.Count
@@ -326,6 +380,16 @@ try {
         , "监视键位=[" HookHealth._WatchKeyNames() "]")
     registered := REG_HK ~= pattern ? REG_HK : "~" REG_HK
     Eq("ActiveHotkeys 记为探测键", HotkeyService.ActiveHotkeys.Get(registered, ""), registered)
+
+    ; DisableGroup 注销须与注册对称：按 ActiveHotkeys 逐条注销，不留 Up 变体残骸
+    beforeDisable := HotkeyService.ActiveHotkeys.Count
+    HotkeyService.DisableGroup(Map("ProbeGroup", true))
+    Eq("DisableGroup 清空注册表", HotkeyService.ActiveHotkeys.Count, 0, "注销前=" beforeDisable)
+    HotkeyService._RegisterOne(REG_HK, {Fn: FakeAction}, pattern)     ; 复原，供后续用例使用
+    HotkeyService._RegisterOne("F8", {Fn: FakeAction}, pattern)       ; 非拦截键同样要清
+    HotkeyService.DisableGroup(Map("ProbeGroup", true))
+    Eq("DisableGroup 清空含非拦截键的注册表", HotkeyService.ActiveHotkeys.Count, 0)
+    HotkeyService._RegisterOne(REG_HK, {Fn: FakeAction}, pattern)     ; 再次复原
     HotIf
 
     ; ---- 4. 抬起基准：必须跟随每次采样到抬起，而非仅在观测到跳变时记 ------------

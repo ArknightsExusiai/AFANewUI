@@ -237,6 +237,9 @@ class HotkeyService {
         Wrapped(ThisHotkey) {
             probe := HookHealth.EnterAction(IsObject(fn) ? fn.Name : fn, KeyForward.PureKeyName(ThisHotkey))
             try {
+                if HoldGuard.ShouldGate(KeyForward.PureKeyName(ThisHotkey))
+                    && HoldGuard.TryBegin(KeyForward.PureKeyName(ThisHotkey), IsObject(fn) ? fn.Name : fn)
+                    return
                 if !GameTarget.Exists() {
                     Logger.Warn("Hotkey", "动作跳过：目标游戏窗口不存在（key=" KeyForward.PureKeyName(ThisHotkey) "）")
                     return
@@ -265,6 +268,9 @@ class HotkeyService {
         Wrapped(ThisHotkey) {
             probe := HookHealth.EnterAction(label != "" ? label : (IsObject(fn) ? fn.Name : fn), KeyForward.PureKeyName(ThisHotkey))
             try {
+                if HoldGuard.ShouldGate(KeyForward.PureKeyName(ThisHotkey))
+                    && HoldGuard.TryBegin(KeyForward.PureKeyName(ThisHotkey), IsObject(fn) ? fn.Name : fn)
+                    return
                 fn(ThisHotkey)
             } finally {
                 HookHealth.ExitAction(probe)
@@ -273,12 +279,18 @@ class HotkeyService {
         return Wrapped
     }
 
+    ; 未拦截键的 Up 变体
+    static _WrapUpHold(ThisHotkey) {
+        HoldGuard.EndHoldMs(KeyForward.PureKeyName(ThisHotkey))
+    }
+
     ; 注册单个热键
     static _RegisterOne(hotkeyValue, profile, pattern) {
         callback := profile.HasOwnProp("NoActivate")
             ? this._WrapObserved(profile.Fn)
             : this._WrapAction(profile.Fn)
         if (profile.HasOwnProp("OnUp") && !InStr(hotkeyValue, "Wheel")) {
+            HoldGuard.MarkUngated(KeyForward.PureKeyName(hotkeyValue))
             reg := (hotkeyValue ~= pattern) ? hotkeyValue " Up" : "~" hotkeyValue " Up"
             Hotkey(reg, callback, "On")
             HotkeyService.ActiveHotkeys.Set(reg, reg)
@@ -288,9 +300,12 @@ class HotkeyService {
         reg := intercept ? hotkeyValue : "~" hotkeyValue
         Hotkey(reg, callback, "On")
         HotkeyService.ActiveHotkeys.Set(reg, reg)
-        ; 有守卫的拦截键（非滚轮）注册 Up 变体；类静态方法须 Bind(KeyForward)
-        if (profile.HasOwnProp("Guarded") && intercept && !InStr(hotkeyValue, "Wheel")) {
-            Hotkey(hotkeyValue " Up", KeyForward.ActionUpForward.Bind(KeyForward), "On")
+        shouldRegisterUp := !InStr(hotkeyValue, "Wheel") && !(profile.HasOwnProp("OnUp"))
+        if shouldRegisterUp {
+            upCallback := (profile.HasOwnProp("Guarded") && intercept)
+                ? KeyForward.ActionUpForward.Bind(KeyForward)
+                : HotkeyService._WrapUpHold.Bind(HotkeyService)
+            Hotkey(hotkeyValue " Up", upCallback, "On")
             HotkeyService.ActiveHotkeys.Set(hotkeyValue " Up", hotkeyValue " Up")
         }
     }
@@ -333,6 +348,8 @@ class HotkeyService {
         KeyForward.SuppressUp.Clear()
         KeyForward.InterceptedKeys.Clear()
         GameKeys.InjectedPressKeys.Clear()
+        HoldGuard.Stop()
+        HookHealth.DiscardAllPending("热键禁用/重建")
         HotIf
         this._NotifyWatchKeysChanged()
         if !silent
@@ -355,28 +372,12 @@ class HotkeyService {
         this._NotifyWatchKeysChanged()
     }
 
-    ; 禁用指定组的热键
+    ; 禁用指定组的热键：直接按 ActiveHotkeys（注册表本身）注销，避免注销条件与注册条件不对称
     static DisableGroup(groupMap) {
         HotIf(HotkeyContext)
-        pattern := GameKeys.GetInterceptPattern()
-        for keyVar, _ in groupMap {
-            hotkeyValue := Config.ReadHotkeyFromIni(keyVar)
-            if (hotkeyValue != "") {
-                try Hotkey(hotkeyValue, , "Off")
-                try Hotkey("~" hotkeyValue, , "Off")
-                ; 仅注销实际注册过的 Up 变体
-                if (this.ActionCallbacks.Has(keyVar)) {
-                    profile := this.ActionCallbacks[keyVar]
-                    if ((profile.HasOwnProp("OnUp") || profile.HasOwnProp("Guarded")) && !InStr(hotkeyValue, "Wheel") && hotkeyValue ~= pattern) {
-                        try Hotkey(hotkeyValue " Up", , "Off")
-                        this.ActiveHotkeys.Delete(hotkeyValue " Up")
-                    }
-                }
-                this.ActiveHotkeys.Delete(hotkeyValue)
-                this.ActiveHotkeys.Delete("~" hotkeyValue)
-                this.ActiveHotkeys.Delete("~" hotkeyValue " Up")
-            }
-        }
+        for reg, _ in this.ActiveHotkeys
+            try Hotkey(reg, , "Off")
+        this.ActiveHotkeys := Map()
         HotIf
         this._NotifyWatchKeysChanged()
     }

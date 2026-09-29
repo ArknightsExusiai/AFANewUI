@@ -121,12 +121,28 @@ class HookHealth {
         return seq
     }
 
-    ; 动作线程退出
+    ; 动作线程退出：只对确实登记过的在飞线程递减深度，避免被跳过入口的动作多减一次
     static ExitAction(seq) {
-        if (this._InFlight.Has(seq))
-            this._InFlight.Delete(seq)
+        if !this._InFlight.Has(seq)
+            return
+        this._InFlight.Delete(seq)
         if (this._Depth > 0)
             this._Depth--
+    }
+
+    ; 作废全部挂起观测（热键禁用/重建时调用）
+    static DiscardAllPending(reason) {
+        if (this._Pending.Count = 0)
+            return
+        count := this._Pending.Count
+        for vk, info in this._Pending {
+            this._BumpProbe(info.key, "discard")
+            if (this._LastWarnTick.Has(vk))
+                this._LastWarnTick.Delete(vk)
+        }
+        this._Pending := Map()
+        this._RebuildWatchKeys()
+        Logger.Debug("HookHealth", "作废全部挂起观测：" count " 条（" reason "）")
     }
 
     ; 移除该键全部挂起观测，返回是否确实清掉了
@@ -296,6 +312,7 @@ class HookHealth {
         return "idle=" A_TimeIdle ", idleKbd=" A_TimeIdleKeyboard ", idlePhys=" A_TimeIdlePhysical
             . ", fire=" this._FireTotal ", miss=" this._MissTotal "/" this._MissStreak
             . ", depth=" this._Depth "(max " this._MaxDepth ")"
+            . ", hold=[" HoldGuard.Snapshot() "]"
             . ", recover=" this._RecoverCount
             . ", ctxEval=" this._FmtMs(HotkeyService._EvalMaxMs) "/" this._FmtMs(this._AvgMs(HotkeyService._EvalTotalMs, HotkeyService._EvalCount)) "ms(max/avg, n=" HotkeyService._EvalCount ")"
             . ", probe=[" this._ProbeSnapshot() "]（arm≈cleared+miss+discard+watchDrop 为正常）"

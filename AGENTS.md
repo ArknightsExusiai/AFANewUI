@@ -98,6 +98,7 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 - 命名：函数/方法/全局变量/静态变量大驼峰 `CheckVersion()`，局部变量小驼峰 `gameProcess`，常量全大写 `MAX_RETRY`
 - Commit 遵循 Conventional Commits `feat(scope): subject`，subject 用中文；scope 与模块文件名一致（如 `game_keys`）。**测试清单例外**：scope 用 `test`、类型用 `docs`（如 `docs(test):`）
 - 分支命名 `feat/描述`、`fix/描述`、`ui/描述` 等；PR 目标分支为 `develop`（非 main）
+- 不要在代码里留过程性注释、判断性说明注释、修改原因注释、历史说明注释、文档指向注释，这些应该进[docs/design](docs/design)而不是放在注释里
 
 ## 版本号
 
