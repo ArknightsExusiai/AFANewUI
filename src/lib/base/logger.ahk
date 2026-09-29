@@ -1,6 +1,6 @@
 ; == 统一日志模块 ==
-; 持久化 INFO/WARN/ERROR，并继续把所有级别输出到 DebugView。
-; 普通日志与关键日志分轨滚动，避免容量清理时丢失错误上下文。
+; 所有级别（INFO/WARN/ERROR/DEBUG）恒持久化，并同步输出到 DebugView 与实时控制台
+; 普通日志与关键日志分轨滚动，避免容量清理时丢失错误上下文
 
 class Logger {
     static BaseDir := ""
@@ -13,7 +13,6 @@ class Logger {
     static Initialized := false
     static FileAvailable := false
     static CriticalFileAvailable := false
-    static DebugEnabled := false
     static ConsoleEnabled := false
     static ConsoleColorEnabled := true
     static ConsoleTipShown := false
@@ -31,7 +30,7 @@ class Logger {
     static CleanupPending := false
     static WritesSinceCleanup := 0
 
-    ; 普通日志保留 15 MiB，关键日志单独保留 5 MiB，总容量仍为 20 MiB。
+    ; 普通日志保留 15 MiB，关键日志单独保留 5 MiB，总容量仍为 20 MiB
     static MaxAgeDays := 7
     static MaxFiles := 20
     static MaxBytes := 20 * 1024 * 1024
@@ -41,12 +40,12 @@ class Logger {
     static MaxCriticalBytes := 5 * 1024 * 1024
     static MaxCriticalSegmentBytes := 1 * 1024 * 1024
     static RecentLineLimit := 100
-    ; 普通日志没有发生轮换时，定期刷新一次目录状态，避免每条日志枚举目录。
+    ; 普通日志没有发生轮换时，定期刷新一次目录状态，避免每条日志枚举目录
     static CleanupWriteInterval := 64
-    ; 按字符保守限制，确保 UTF-8 编码后的单行不会无限增长。
+    ; 按字符保守限制，确保 UTF-8 编码后的单行不会无限增长
     static MaxLineCharacters := 15000
 
-    ; 初始化当前会话日志。失败时保留 DebugView 降级路径，不抛出异常。
+    ; 初始化当前会话日志。失败时保留 DebugView 降级路径，不抛出异常
     static Init() {
         if this.Initialized
             return
@@ -62,7 +61,7 @@ class Logger {
             this.FileAvailable := !!DirExist(this.LogDirectory)
             this.CriticalFileAvailable := this.FileAvailable
             if this.FileAvailable {
-                ; 在创建新会话文件前识别上一会话是否异常退出，避免新空文件掩盖旧会话。
+                ; 在创建新会话文件前识别上一会话是否异常退出，避免新空文件掩盖旧会话
                 this.PreviousAbnormalFile := this._FindPreviousAbnormalFile(this.GetOrdinaryLogFiles())
                 this.SessionId := FormatTime(, "yyyyMMdd-HHmmss") "-" DllCall("GetCurrentProcessId") "-" A_TickCount
                 this.CurrentFile := this.LogDirectory "\afa-" this.SessionId ".log"
@@ -83,14 +82,9 @@ class Logger {
         OnError(ObjBindMethod(this, "HandleUnhandledError"))
     }
 
-    static SetDebugEnabled(enabled) {
-        this.DebugEnabled := !!enabled
-        this.Debug("Logger", "DEBUG 持久化=" (this.DebugEnabled ? "enabled" : "disabled"))
-    }
-
-    ; 启用/停用实时控制台回显。
+    ; 启用/停用实时控制台回显
     ; enabled 为 true 时创建「AFA 调试日志」控制台窗口；进程已有控制台（如从终端启动）时 AllocConsole 返回 0，
-    ; 静默降级——ConsoleEnabled 仍置 true 但 ConsoleHandle 保持为空，_EchoToConsole 为 no-op，仅持久化 Debug，不弹窗不报错。
+    ; 静默降级——ConsoleEnabled 仍置 true 但 ConsoleHandle 保持为空，_EchoToConsole 为 no-op，仅持久化日志，不弹窗不报错
     static SetConsoleEnabled(enabled) {
         if (enabled) {
             if (this.ConsoleEnabled)
@@ -127,8 +121,8 @@ class Logger {
                 ; 控制台启动横幅（亮蓝 0x09）+ 回放此前的最近日志（控制台打开前的内容不再被忽略）
                 this._EchoToConsole("INFO", "", 0x09)
                 this._EchoToConsole("INFO", "===== AFA 调试日志控制台已打开 =====", 0x09)
-                this._EchoToConsole("INFO", "调试模式已启用：日志实时显示并持久化到日志文件", 0x09)
-                this._EchoToConsole("INFO", "如需关闭：其他设置 → 日志，取消勾选「启用调试模式」并应用", 0x09)
+                this._EchoToConsole("INFO", "调试日志控制台已打开：日志始终完整记录到文件，此处实时显示", 0x09)
+                this._EchoToConsole("INFO", "如需关闭：其他设置 → 日志，取消勾选「显示调试日志控制台」并应用", 0x09)
                 this._EchoToConsole("INFO", "----- 以下为此前的最近日志 -----")
                 for bufferedLine in this.RecentLines {
                     lvl := this._ExtractLevelFromLine(bufferedLine)
@@ -165,9 +159,9 @@ class Logger {
         return "INFO"
     }
 
-    ; 回显一行到控制台（所有级别）。按级别着色；控制台不可用时静默降级，不中断日志。
-    ; 使用 WriteConsoleW 直接写入（无缓冲、UTF-16 原生、实时渲染），不使用 FileOpen 缓冲写入。
-    ; colorOverride：显式指定颜色（如横幅亮蓝 0x09），0 表示按 level 着色。
+    ; 回显一行到控制台（所有级别）。按级别着色；控制台不可用时静默降级，不中断日志
+    ; 使用 WriteConsoleW 直接写入（无缓冲、UTF-16 原生、实时渲染），不使用 FileOpen 缓冲写入
+    ; colorOverride：显式指定颜色（如横幅亮蓝 0x09），0 表示按 level 着色
     static _EchoToConsole(level, line, colorOverride := 0) {
         if (!this.ConsoleEnabled || !this.ConsoleHandle)
             return
@@ -196,7 +190,9 @@ class Logger {
     }
 
     static Debug(component, message) {
-        this._Write("DEBUG", component, message, this.DebugEnabled)
+        ; DEBUG 恒持久化：运行行为（动作执行、透传、识别明细等）对排查至关重要，
+        ; 不应依赖用户开启调试模式；「调试模式」开关仅控制实时控制台显示（See SetConsoleEnabled）
+        this._Write("DEBUG", component, message, true)
     }
 
     static Info(component, message) {
@@ -225,7 +221,7 @@ class Logger {
         this.Error(component, message)
     }
 
-    ; 全局未处理异常回调：返回 false，保留 AutoHotkey 原有错误处理。
+    ; 全局未处理异常回调：返回 false，保留 AutoHotkey 原有错误处理
     static HandleUnhandledError(error, mode := "") {
         if this.IsWriting
             return false
@@ -238,7 +234,7 @@ class Logger {
             this.Info("Shutdown", "程序退出 reason=" exitReason " code=" exitCode)
     }
 
-    ; 兼容现有调用方和导出器的脱敏入口。
+    ; 兼容现有调用方和导出器的脱敏入口
     static Redact(text, forExport := false) {
         text := "" text
         for secret in this.Secrets {
@@ -246,7 +242,7 @@ class Logger {
                 text := StrReplace(text, secret, "<REDACTED>")
         }
 
-        ; 防御性遮盖常见 Authorization/Token 文本，即使调用方误传也不会落盘。
+        ; 防御性遮盖常见 Authorization/Token 文本，即使调用方误传也不会落盘
         text := RegExReplace(text, "i)(Authorization\s*[:=]\s*token\s+)[^\s,;]+", "$1<REDACTED>")
         text := RegExReplace(text, "i)(GitHubTokenProtected|GitHubToken)\s*[:=]\s*[^\s,;]+", "$1=<REDACTED>")
 
@@ -263,14 +259,6 @@ class Logger {
             computerName := EnvGet("COMPUTERNAME")
             if (computerName != "")
                 text := StrReplace(text, computerName, "<COMPUTER>")
-            userName := EnvGet("USERNAME")
-            if (userName != "") {
-                ; 用户名可能很短（如单字符 s），StrReplace 纯子串替换 + 默认大小写不敏感会误伤正常英文单词内部的字母。
-                ; 改用边界感知正则替换：命中位置前后不允许是字母（Unicode \p{L}），且前面不能是 =（等号后的值可能是热键绑定键名，与用户名无关）。
-                ; 由此同时避免误伤热键明细中的单字符绑定值（如 Freeze=s），只替换"独立出现"的用户名。
-                ; \Q...\E 将用户名作为字面量匹配，避免用户名中的正则特殊字符被解释（Windows 用户名不含反斜杠，不会被截断）。
-                text := RegExReplace(text, "i)(?<![=\p{L}])\Q" userName "\E(?!\p{L})", "<USER>")
-            }
         }
         return text
     }
@@ -352,7 +340,7 @@ class Logger {
         }
     }
 
-    ; 文件采用每次追加、立即关闭的方式；错误级别额外写入关键日志并带上最近上下文。
+    ; 文件采用每次追加、立即关闭的方式；错误级别额外写入关键日志并带上最近上下文
     static _Write(level, component, message, persist) {
         line := this._BuildLine(level, component, message)
         OutputDebug(line)
@@ -480,7 +468,7 @@ class Logger {
             this._CleanupOrdinaryLogs()
             this._CleanupCriticalLogs()
         } catch Error as e {
-            ; 清理失败不影响主日志和 DebugView 降级路径。
+            ; 清理失败不影响主日志和 DebugView 降级路径
             OutputDebug("[Logger] 日志清理失败：" e.Message)
         } finally {
             this._RefreshLogMetrics()
@@ -491,12 +479,12 @@ class Logger {
 
     static _CleanupExpiredLogs() {
         cutoff := DateAdd(A_Now, -this.MaxAgeDays, "Days")
-        ; 期限清理只处理普通历史日志；关键日志仅受自身容量和文件数预算约束。
+        ; 期限清理只处理普通历史日志；关键日志仅受自身容量和文件数预算约束
         for file in this.GetOrdinaryLogFiles() {
             if this._IsProtectedPath(file.path)
                 continue
             try {
-                ; DateDiff 的结果为 DateTime1 - DateTime2；截止时间晚于文件时间才表示文件已过期。
+                ; DateDiff 的结果为 DateTime1 - DateTime2；截止时间晚于文件时间才表示文件已过期
                 if (file.time != "" && DateDiff(cutoff, file.time, "Seconds") > 0)
                     FileDelete(file.path)
             }
@@ -527,7 +515,7 @@ class Logger {
 
             oldest := this._FindOldest(files)
             if (oldest = "") {
-                ; 只有当前关键文件时，先轮换出可清理分片，再重新计算容量。
+                ; 只有当前关键文件时，先轮换出可清理分片，再重新计算容量
                 if (totalBytes > this.MaxCriticalBytes && this._RotateCriticalFile())
                     continue
                 break
@@ -591,7 +579,7 @@ class Logger {
         this.MetricsInitialized := true
     }
 
-    ; 当前会话日志轮换出可清理分片，当前路径保持不变以便继续追加。
+    ; 当前会话日志轮换出可清理分片，当前路径保持不变以便继续追加
     static _RotateCurrentFile() {
         if (this.CurrentFile = "" || !FileExist(this.CurrentFile))
             return false
@@ -674,7 +662,7 @@ class Logger {
                 content := SubStr(content, -65536)
             return InStr(content, "[Shutdown]") > 0
         } catch {
-            ; 无法读取的上一会话按异常退出处理，优先保留。
+            ; 无法读取的上一会话按异常退出处理，优先保留
             return false
         }
     }

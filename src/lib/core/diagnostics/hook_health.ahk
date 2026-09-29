@@ -1,40 +1,38 @@
 ; == 键盘钩子存活探针与自愈 ==
-; 背景（#340，已由 afa-20260901-225024 日志实证）：AFA 全部热键注册在 HotIf 回调下，
-; 每次按键都要主线程求值，求值期间钩子回调阻塞。主线程若超过系统低级钩子超时
-; （LowLevelHooksTimeout，未配置时默认 300ms）无法响应，系统累计 11 次后即静默摘除键盘钩子，
-; 表现为「所有快捷键突然失效，必须重启或重新注册热键才恢复」，且 AHK 自身无从感知。
-;
-; 观测手法：用**不依赖钩子**的 GetAsyncKeyState 采样已注册热键键位的物理按下沿，
-; 与**依赖钩子**的热键回调计数（NoteFire）对照。观测到物理按下却在宽限期内没有任何热键回调
-; ⇒ 记一次未命中；连续多次 ⇒ 判定钩子失效，落一份完整状态快照并按需自愈。
-;
-; 判读要点（实证）：快照里的 idle/idleKbd/idlePhys 三值恒等，说明 A_TimeIdleKeyboard 与
-; A_TimeIdlePhysical 已退化为 A_TimeIdle（文档：钩子未安装时二者等价于 A_TimeIdle），
-; 即钩子确已不再被调用；三值有差异则说明钩子仍在正常区分键盘与鼠标输入。
-; 注意单看 idleKbd 数值大小无法判定——纯键盘输入时两种情况都接近 0，必须看三值是否恒等。
+
+IsMouseKey(pureKey) {
+    return pureKey ~= "i)^(lbutton|rbutton|mbutton|xbutton1|xbutton2|wheel)"
+}
+
 class HookHealth {
     ; ---- 可调参数 ----
-    static PollIntervalMs := 100      ; 物理按键采样间隔
-    static ReportIntervalMs := 5000   ; 异常期状态快照上报间隔
-    static HeartbeatMs := 60000       ; 正常期心跳快照间隔（保留基线，便于事后比对三值是否恒等）
-    static PressGraceMs := 800        ; 物理按下后等待热键回调的宽限（日志实测按住时长 85~590ms）
-    static MissThreshold := 3         ; 连续多少次未命中判定为钩子失效
-    static WatchRefreshMs := 5000     ; 监视键位表刷新间隔（纯内存，无 IO）
-    static RecoverCooldownMs := 5000  ; 两次自愈之间的最小间隔，避免异常持续时反复重装钩子
-    static AutoRecover := true        ; 已确认故障模式为钩子被系统摘除，默认开启自愈
+    static PollIntervalMs := 100
+    static ReportIntervalMs := 5000
+    static HeartbeatMs := 60000
+    static PendingGraceMs := 3000
+    static MissWarnCooldownMs := 5000
+    static MissThreshold := 5
+    static FireRaceWindowMs := 250
+    static WatchRefreshMs := 5000
+    static RecoverCooldownMs := 30000
+    static AutoRecover := true
 
     ; ---- 运行时状态 ----
     static _Timer := ""
     static _WatchKeys := Map()        ; vk -> pureKey
     static _PrevDown := Map()         ; vk -> true/false
-    static _Pending := Map()          ; vk -> {tick, fire, key, idleKbd}
-    static _FireCount := 0            ; 热键回调累计次数（由 NoteFire 递增）
-    static _LastFireSeen := 0         ; 上一拍看到的回调计数，用于直接识别"回调恢复"
+    static _Pending := Map()          ; vk -> {tick, key, idleKbd, fire, fgHwnd}
+    static _FireByKey := Map()        ; pureKey -> 回调累计次数
+    static _FireTotal := 0
+    static _LastFireTick := Map()     ; pureKey -> 最近回调时刻
+    static _LastUpEdge := Map()       ; pureKey -> 最近采样到抬起的时刻
+    static _LastPressEdge := Map()    ; pureKey -> 最近采样到按下沿的时刻
+    static _LastWarnTick := Map()     ; pureKey -> 最近告警时刻
     static _MissStreak := 0
     static _MissTotal := 0
-    static _Depth := 0                ; 当前在执行的动作线程数
+    static _Depth := 0                ; 在执行的动作线程数
     static _MaxDepth := 0
-    static _InFlight := Map()         ; seq -> {name, tick}
+    static _InFlight := Map()         ; seq -> {name, key, tick}
     static _Seq := 0
     static _NextReportTick := 0
     static _NextWatchTick := 0
@@ -42,56 +40,133 @@ class HookHealth {
     static _RecoverCount := 0
     static _Suspected := false
     static _Started := false
+    ; ---- 探针自证计数（按纯键名）----
+    static _ProbeStats := Map()
 
-    ; 启动探针（由 App.Bootstrap 在 HotkeyOn 之后调用，保证 ActiveHotkeys 已就绪）
+    static _BumpProbe(pureKey, field) {
+        if !this._ProbeStats.Has(pureKey)
+            this._ProbeStats[pureKey] := {arm: 0, raceSkip: 0, cleared: 0, miss: 0, discard: 0, watchDrop: 0}
+        stats := this._ProbeStats[pureKey]
+        stats.%field% += 1
+    }
+
+    static _ProbeKeyStats(pureKey) {
+        if !this._ProbeStats.Has(pureKey)
+            return "arm=0,cleared=0"
+        stats := this._ProbeStats[pureKey]
+        return "arm=" stats.arm ",raceSkip=" stats.raceSkip ",cleared=" stats.cleared
+            . ",miss=" stats.miss ",discard=" stats.discard ",watchDrop=" stats.watchDrop
+    }
+
+    static _ProbeSnapshot() {
+        parts := ""
+        for key, stats in this._ProbeStats {
+            parts .= (parts = "" ? "" : " ") key "(arm=" stats.arm ",raceSkip=" stats.raceSkip
+                . ",cleared=" stats.cleared ",miss=" stats.miss ",discard=" stats.discard
+                . ",watchDrop=" stats.watchDrop ")"
+        }
+        return (parts = "" ? "(无)" : parts)
+    }
+
+    static _IsWatchedKey(pureKey) {
+        for _, watchedKey in this._WatchKeys {
+            if (watchedKey = pureKey)
+                return true
+        }
+        return false
+    }
+
+    ; 前台窗口句柄
+    static _ForegroundHwnd() {
+        return DllCall("GetForegroundWindow", "Ptr")
+    }
+
+    ; 启动探针（须在 HotkeyOn 之后调用）
     static Start() {
         if (this._Started)
             return
         this._Started := true
-        this._RefreshWatchKeys()
+        this._RebuildWatchKeys()
         if (this._Timer = "")
             this._Timer := HookHealth._Poll.Bind(HookHealth)
         SetTimer this._Timer, this.PollIntervalMs
         Logger.Info("HookHealth", "钩子健康探针已启动，采样=" this.PollIntervalMs "ms，监视键位=" this._WatchKeyNames())
     }
 
-    ; 热键回调发生（任何一次进入热键线程都应调用），供物理按下沿对照
-    static NoteFire() {
-        this._FireCount++
+    ; 热键回调发生
+    static NoteFire(pureKey) {
+        if (pureKey == "")
+            return
+        this._FireTotal++
+        this._FireByKey[pureKey] := this._FireByKey.Get(pureKey, 0) + 1
+        this._LastFireTick[pureKey] := A_TickCount
+        if (this._ClearPendingFor(pureKey))
+            this._BumpProbe(pureKey, "cleared")
+        if (this._Suspected)
+            this._NoteHit()
     }
 
-    ; 动作线程进入：返回句柄，调用方必须在 finally 里 ExitAction(句柄)
-    static EnterAction(name) {
-        this.NoteFire()
+    static FireTotal() {
+        return this._FireTotal
+    }
+
+    ; 动作线程进入；返回的句柄必须在 finally 里交给 ExitAction
+    static EnterAction(name, pureKey) {
+        this.NoteFire(pureKey)
         seq := ++this._Seq
-        this._InFlight[seq] := {name: name, tick: A_TickCount}
+        this._InFlight[seq] := {name: name, key: pureKey, tick: A_TickCount}
         this._Depth++
         if (this._Depth > this._MaxDepth)
             this._MaxDepth := this._Depth
         return seq
     }
 
-    ; 动作线程退出
+    ; 动作线程退出：只对确实登记过的在飞线程递减深度，避免被跳过入口的动作多减一次
     static ExitAction(seq) {
-        if (this._InFlight.Has(seq))
-            this._InFlight.Delete(seq)
+        if !this._InFlight.Has(seq)
+            return
+        this._InFlight.Delete(seq)
         if (this._Depth > 0)
             this._Depth--
+    }
+
+    ; 作废全部挂起观测（热键禁用/重建时调用）
+    static DiscardAllPending(reason) {
+        if (this._Pending.Count = 0)
+            return
+        count := this._Pending.Count
+        for vk, info in this._Pending {
+            this._BumpProbe(info.key, "discard")
+            if (this._LastWarnTick.Has(vk))
+                this._LastWarnTick.Delete(vk)
+        }
+        this._Pending := Map()
+        this._RebuildWatchKeys()
+        Logger.Debug("HookHealth", "作废全部挂起观测：" count " 条（" reason "）")
+    }
+
+    ; 移除该键全部挂起观测，返回是否确实清掉了
+    static _ClearPendingFor(pureKey) {
+        if (this._Pending.Count = 0)
+            return false
+        stale := []
+        for vk, info in this._Pending {
+            if (info.key = pureKey)
+                stale.Push(vk)
+        }
+        if (stale.Length = 0)
+            return false
+        for vk in stale
+            this._Pending.Delete(vk)
+        return true
     }
 
     ; ---- 采样主循环 ----
     static _Poll() {
         now := A_TickCount
-        if (now >= this._NextWatchTick) {
-            this._NextWatchTick := now + this.WatchRefreshMs
-            this._RefreshWatchKeys()
-        }
-        ; 回调计数增长即证明热键已能正常触发。直接在此判定恢复，不依赖建档：
-        ; 旧实现只在"建档的按下被消费"时才判恢复，而恢复后的按键往往因动作正在执行
-        ; 而不满足建档条件，导致恢复时刻从未被记录（首版探针实测缺陷）。
-        if (this._FireCount != this._LastFireSeen) {
-            this._LastFireSeen := this._FireCount
-            this._NoteHit()
+        if (this._NextWatchTick > 0 && now >= this._NextWatchTick) {
+            this._NextWatchTick := 0
+            this._RebuildWatchKeys()
         }
         this._SamplePhysicalKeys(now)
         this._ResolvePending(now)
@@ -101,30 +176,34 @@ class HookHealth {
         }
     }
 
-    ; 采样物理按下沿。GetAsyncKeyState 由系统维护，不经过本进程的钩子——
-    ; 这正是"钩子已死但按键仍在"能被观测到的原因。
+    ; 采样物理按下沿（GetAsyncKeyState 不经过本进程钩子）
     static _SamplePhysicalKeys(now) {
         for vk, pureKey in this._WatchKeys {
             isDown := (DllCall("GetAsyncKeyState", "Int", vk, "Short") & 0x8000) != 0
             wasDown := this._PrevDown.Has(vk) && this._PrevDown[vk]
             this._PrevDown[vk] := isDown
-            if (!isDown || wasDown)
+            if (!isDown) {
+                this._LastUpEdge[pureKey] := now
                 continue
-            ; 新的物理按下沿：只在"本应触发热键"的条件下建档，避免误报
+            }
+            if (wasDown)
+                continue
             if (!this._ShouldArm(pureKey))
                 continue
-            ; 记录按下瞬间的 idleKbd 备查。注意：钩子未安装时 A_TimeIdleKeyboard 会退化为 A_TimeIdle，
-            ; 纯键盘输入下两种情况数值都接近 0，故**不能单看此值判定钩子存活**，
-            ; 真正的判据是快照里 idle/idleKbd/idlePhys 三值是否恒等。
-            this._Pending[vk] := {tick: now, fire: this._FireCount, key: pureKey, idleKbd: A_TimeIdleKeyboard}
+            lastUp := this._LastUpEdge.Get(pureKey, 0)
+            this._LastPressEdge[pureKey] := now
+            lastFire := this._LastFireTick.Get(pureKey, 0)
+            if (lastFire != 0 && lastFire > lastUp && now - lastFire < this.FireRaceWindowMs) {
+                this._BumpProbe(pureKey, "raceSkip")
+                continue
+            }
+            this._Pending[vk] := {tick: now, key: pureKey, idleKbd: A_TimeIdleKeyboard
+                , fire: this._FireByKey.Get(pureKey, 0), fgHwnd: this._ForegroundHwnd()}
+            this._BumpProbe(pureKey, "arm")
         }
     }
 
-    ; 是否把这次物理按下计入观测：
-    ; - 游戏必须是前台（HotkeyContext 的键盘键放行前提）
-    ; - 不是 AFA 自己注入的按键（注入按下窗口 / Up 补发抑制窗口）
-    ; 注意不再因"有动作正在执行"而拒绝建档：动作执行期间其它热键本就应当能触发，
-    ; 拒绝建档会连恢复判定一起挡掉；动作期间的误判改在结算时排除（见 _ResolvePending）。
+    ; 是否把这次物理按下计入观测
     static _ShouldArm(pureKey) {
         if (!GameTarget.IsForegroundCached())
             return false
@@ -135,28 +214,48 @@ class HookHealth {
         return true
     }
 
-    ; 判定建档的物理按下是否被热键回调消费
+    ; 结算挂起按下
     static _ResolvePending(now) {
         if (this._Pending.Count = 0)
             return
         settled := []
         for vk, info in this._Pending {
-            if (this._FireCount > info.fire) {
-                settled.Push(vk)                 ; 期间发生过热键回调 → 命中
-                this._NoteHit()
+            if (now - info.tick < this.PendingGraceMs)
+                continue
+            if (this._FireByKey.Get(info.key, 0) > info.fire) {
+                settled.Push(vk)
                 continue
             }
-            if (now - info.tick < this.PressGraceMs)
+            if !this._IsWatchedKey(info.key) {
+                this._BumpProbe(info.key, "watchDrop")
+                settled.Push(vk)
                 continue
-            settled.Push(vk)
-            ; 结算时仍有动作在执行：同键重入被 MaxThreadsPerHotkey 正常屏蔽，不算异常
+            }
             if (this._Depth > 0)
                 continue
+            if (info.HasOwnProp("fgHwnd") && info.fgHwnd != this._ForegroundHwnd()) {
+                this._BumpProbe(info.key, "discard")
+                settled.Push(vk)
+                continue
+            }
+            if (IsMouseKey(info.key) && !IsMouseInClient()) {
+                this._BumpProbe(info.key, "discard")
+                settled.Push(vk)
+                continue
+            }
+            lastWarn := this._LastWarnTick.Get(info.key, 0)
+            if (lastWarn != 0 && now - lastWarn < this.MissWarnCooldownMs)
+                continue
+            settled.Push(vk)
+            this._LastWarnTick[info.key] := now
             this._MissTotal++
             this._MissStreak++
+            this._BumpProbe(info.key, "miss")
             Logger.Warn("HookHealth", "物理按下未触发热键：key=" info.key
                 . "，按下瞬间 idleKbd=" info.idleKbd "ms"
-                . "，连续未命中=" this._MissStreak "，累计=" this._MissTotal)
+                . "，监听 " this.PendingGraceMs "ms 内无对应回调"
+                . "，连续未命中=" this._MissStreak "，累计=" this._MissTotal
+                . "，该键自证=" this._ProbeKeyStats(info.key))
             if (this._MissStreak >= this.MissThreshold)
                 this._OnSuspected()
         }
@@ -166,8 +265,7 @@ class HookHealth {
         }
     }
 
-    ; 热键回调恢复：清零连击计数；若此前已判定失效，记录恢复时刻，
-    ; 便于与「热键已重建」日志或自愈记录对照，确认恢复由谁触发。
+    ; 热键回调恢复
     static _NoteHit() {
         this._MissStreak := 0
         if (!this._Suspected)
@@ -177,7 +275,6 @@ class HookHealth {
         Logger.Warn("HookHealth", "热键回调已恢复 | " this._Snapshot())
     }
 
-    ; 连续未命中达阈值：落一份完整现场快照，并按需自愈
     static _OnSuspected() {
         firstHit := !this._Suspected
         this._Suspected := true
@@ -190,11 +287,12 @@ class HookHealth {
             return
         this._LastRecoverTick := A_TickCount
         this._RecoverCount++
-        ; ahk_docs/lib/InstallKeybdHook.htm：Force=true 会卸载并重装钩子，
-        ; "If the system has stopped calling the hook due to an unresponsive program, reinstalling the hook might get it working again."
+        Logger.Warn("HookHealth", "钩子自愈：已强制重装键盘钩子并抢占优先级（第 " this._RecoverCount " 次）"
+            . "——若真实原因是输入被其它进程的前置钩子吞掉，本操作会改变钩子链优先级顺序；"
+            . "连续未命中=" this._MissStreak "，冷却=" this.RecoverCooldownMs "ms，累计自愈=" this._RecoverCount)
         try {
             InstallKeybdHook(true, true)
-            Logger.Warn("HookHealth", "已重装键盘钩子（第 " this._RecoverCount " 次自愈），热键应即刻恢复")
+            Logger.Warn("HookHealth", "钩子自愈完成（第 " this._RecoverCount " 次自愈），热键应即刻恢复")
         } catch Error as e {
             Logger.Exception("HookHealth", e, "重装键盘钩子失败")
         }
@@ -202,8 +300,6 @@ class HookHealth {
     }
 
     ; ---- 周期快照 ----
-    ; 正常期按心跳节奏留基线（三值是否恒等是事后判读的关键依据），
-    ; 异常期与有动作在飞/状态表非空时提高到 ReportIntervalMs，保证现场完整。
     static _Report() {
         if (this._Suspected) {
             Logger.Warn("HookHealth", "现场快照 | " this._Snapshot())
@@ -214,8 +310,12 @@ class HookHealth {
 
     static _Snapshot() {
         return "idle=" A_TimeIdle ", idleKbd=" A_TimeIdleKeyboard ", idlePhys=" A_TimeIdlePhysical
-            . ", fire=" this._FireCount ", miss=" this._MissTotal "/" this._MissStreak
+            . ", fire=" this._FireTotal ", miss=" this._MissTotal "/" this._MissStreak
             . ", depth=" this._Depth "(max " this._MaxDepth ")"
+            . ", hold=[" HoldGuard.Snapshot() "]"
+            . ", recover=" this._RecoverCount
+            . ", ctxEval=" this._FmtMs(HotkeyService._EvalMaxMs) "/" this._FmtMs(this._AvgMs(HotkeyService._EvalTotalMs, HotkeyService._EvalCount)) "ms(max/avg, n=" HotkeyService._EvalCount ")"
+            . ", probe=[" this._ProbeSnapshot() "]（arm≈cleared+miss+discard+watchDrop 为正常）"
             . ", inflight=[" this._InFlightNames() "]"
             . ", SuppressUp=[" this._KeyList(KeyForward.SuppressUp) "]"
             . ", DownHandled=[" this._KeyList(KeyForward.DownHandled) "]"
@@ -223,10 +323,19 @@ class HookHealth {
             . ", InjectedPress=[" this._KeyList(GameKeys.InjectedPressKeys) "]"
     }
 
+    static _AvgMs(totalMs, count) {
+        return count > 0 ? totalMs / count : 0
+    }
+
+    ; 耗时统一一位小数定长输出
+    static _FmtMs(valueMs) {
+        return Format("{:.1f}", valueMs)
+    }
+
     static _InFlightNames() {
         parts := "", now := A_TickCount
         for _, info in this._InFlight
-            parts .= (parts = "" ? "" : " ") info.name "+" (now - info.tick) "ms"
+            parts .= (parts = "" ? "" : " ") info.name "/" info.key "+" (now - info.tick) "ms"
         return parts
     }
 
@@ -244,8 +353,14 @@ class HookHealth {
         return parts
     }
 
-    ; 监视键位表 = 当前已注册热键的纯键名（纯内存读取 HotkeyService.ActiveHotkeys，无 INI IO）
-    static _RefreshWatchKeys() {
+    ; 键位集合变更时立即重建监视表
+    static RefreshWatchKeysNow() {
+        this._RebuildWatchKeys()
+        this._NextWatchTick := A_TickCount + this.WatchRefreshMs
+    }
+
+    ; 监视键位表（vk -> pureKey）
+    static _RebuildWatchKeys() {
         next := Map()
         for _, hotkeyValue in HotkeyService.ActiveHotkeys {
             pureKey := KeyForward.PureKeyName(hotkeyValue)
@@ -262,13 +377,27 @@ class HookHealth {
             next[vk] := pureKey
         }
         this._WatchKeys := next
-        ; 清理已下线键位的采样状态，避免 Map 无限增长
         stale := []
         for vk, _ in this._PrevDown {
             if (!next.Has(vk))
                 stale.Push(vk)
         }
-        for vk in stale
-            this._PrevDown.Delete(vk)
+        for vk in stale {
+            if (this._PrevDown.Has(vk))
+                this._PrevDown.Delete(vk)
+        }
+        ; 清理已下线键位的抬起记录
+        if (this._LastUpEdge.Count > 0) {
+            known := Map()
+            for _, pureKey in next
+                known[pureKey] := true
+            for key, _ in this._LastUpEdge {
+                if !known.Has(key) {
+                    try this._LastUpEdge.Delete(key)
+                    catch UnsetItemError {
+                    }
+                }
+            }
+        }
     }
 }

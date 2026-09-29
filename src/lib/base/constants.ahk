@@ -4,6 +4,18 @@
 class Constants {
     static DefaultTabOrder := "keyBind,quick,strongHoldProtocol,customKeys,other"
 
+    ; 界面主题模式：唯一合法值集合与规范化规则
+    static ThemeModes := ["auto", "light", "dark"]
+
+    ; 规范化主题模式：大小写不敏感，非法值回退 auto
+    static NormalizeThemeMode(mode) {
+        mode := StrLower(mode)
+        for item in this.ThemeModes
+            if (item = mode)
+                return mode
+        return "auto"
+    }
+
     ; 延迟常量
     static Delay30 := 34      ; 30帧
     static Delay60 := 17      ; 60帧
@@ -21,10 +33,10 @@ class Constants {
     ; 旧版序号→帧率文本（用于迁移和回退）
     static FrameOldIndexToText := Map("1","30", "2","60", "3","90", "4","120", "5","144", "6","165", "7","240+")
 
-    ; 按键名称映射（由 HotkeySchema 生成）
+    ; 按键名称映射
     static KeyNames := HotkeySchema.GetKeyNames()
 
-    ; 热键启用分组，同时作为冲突检测的唯一分组数据源（由 HotkeySchema 生成）
+    ; 热键启用分组，同时作为冲突检测的唯一分组数据源
     static CombatHotkeys := HotkeySchema.GetGroupMap("combat")
     static QuickHotkeys := HotkeySchema.GetGroupMap("quick")
     static StrongHoldHotkeys := HotkeySchema.GetGroupMap("strongHold")
@@ -33,7 +45,7 @@ class Constants {
     static ImportantNames := Map(
         "AutoExit", "自动退出",
         "AutoOpenSettings", "自动打开设置界面",
-        "ExitOnWindowClose", "关闭窗口时退出小助手",
+        "ExitOnWindowClose", "关闭窗口时退出AFA",
         "Frame", "游戏内帧率设置（兼容旧版）",
         "Frame155", "游戏内帧率设置",
         "AutoUpdate", "自动检查更新",
@@ -45,22 +57,25 @@ class Constants {
         "GamePath", "游戏路径",
         "GamePathCN", "国服游戏路径",
         "GamePathBILI", "哔哩哔哩服游戏路径",
+        "GamePathTC", "繁中服游戏路径",
         "GamePathJP", "日服游戏路径",
         "GamePathKR", "韩服游戏路径",
         "GamePathEN", "国际服游戏路径",
         "PreferredServer", "首选区服",
         "LastActiveServer", "上次识别区服",
-        "AutoRunGame", "随小助手自动启动明日方舟",
-        "AutoStartWithGame", "随明日方舟自动启动小助手",
+        "AutoRunGame", "随AFA自动启动明日方舟",
+        "AutoStartWithGame", "随明日方舟自动启动AFA",
         "DismissedChangelogVersion", "已忽略公告版本",
         "DefaultStrongHoldProtocol", "默认启动卫戍协议方案",
         "TabOrder", "标签页顺序",
         "HiddenTabs", "隐藏的标签页",
         "AutoBeginPause", "开局自动暂停",
+        "AutoBeginSpeed", "开局自动二倍速",
         "BackCeaseOperations", "使用“返回上级菜单”放弃行动",
         "InLevelGuard", "在非战斗关卡场景禁用常规战斗热键",
-        "DebugEnabled", "调试模式",
-        "Language", "界面语言"
+        "DebugEnabled", "显示调试日志控制台",
+        "Language", "界面语言",
+        "ThemeMode", "界面主题"
     )
 
     ; 自定义设置名称映射
@@ -73,7 +88,7 @@ class Constants {
         "HoverOperate", "游戏窗口未激活时允许鼠标悬停在窗口上触发热键"
     )
 
-    ; 自定义按键：单条数量上限（GUI 预建行数，两列 × 6 行，对齐常规作战页布局）与类型选项（类型码 + 显示名键，供下拉框与校验共享）
+    ; 自定义按键：单条数量上限与类型选项
     static CustomHotkeyMax := 12
     static CustomHotkeyTypeOptions := [
         {code: "global", nameKey: "全局按键"},
@@ -81,7 +96,7 @@ class Constants {
         {code: "quick", nameKey: "快捷操作类"},
         {code: "strongHold", nameKey: "卫戍协议类"}
     ]
-    ; 自定义按键功能选项（功能码 + 显示名键）：目前仅"单击"（click），未来功能在此扩展
+    ; 自定义按键功能选项（功能码 + 显示名键）
     static CustomHotkeyFuncOptions := [
         {code: "click", nameKey: "单击"}
     ]

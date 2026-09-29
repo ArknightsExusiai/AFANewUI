@@ -1,23 +1,18 @@
 ; == 按键透传（守卫拦截时还原原键输入） ==
-; 状态与行为内聚为类：InterceptedKeys 记录已补发 key down 的键，Up 变体回调据此补发 key up
 class KeyForward {
     static InterceptedKeys := Map()
-    ; down 已被 AFA 主热键处理过的键（运行时标记，GuardInLevel 记录）：Up 变体据此决定是否放行补发 key up
-    ; ——覆盖守卫放行/拦截两路径的失焦/拖出卡键；游戏外主热键不触发则不记录，Up 变体不放行，物理 up 正常透传（打字不受影响）。
+    ; down 已被 AFA 主热键处理过的键：Up 变体据此决定是否放行补发 key up
     static DownHandled := Map()
-    ; 补发 up 期间的递归抑制记录（按键级，pureKey→true）：ActionUpForward 的 Send 补发会被钩子重新捕获触发同名 Up 变体，
-    ; 若继续放行会无限循环（导致游戏外按键失灵）。仅抑制正在补发的同名键，不误挡同时松开的其它键——
-    ; 全局布尔会把其它键的物理 Up 也挡掉（HotkeyContext 条件失败→被吞→卡键，见多键同松竞态）。
+    ; 补发 up 期间的递归抑制记录
     static SuppressUp := Map()
-    ; 守卫拦截日志节流：滚轮等无 down/up 状态的事件每次独立滚动都走拦截路径（不写 InterceptedKeys，无按键去重），
-    ; 无极/高分辨率滚轮可达数百次/秒——若逐条 Info 落盘会形成"每档位一次文件 IO"的洪峰，
-    ; 拖慢主线程并刷爆日志轨（15MiB）。按 100ms 时间窗去重（普通键维持 InterceptedKeys 原去重语义，不在此限流）。
+    ; 守卫拦截日志节流
     static GuardLogIntervalMs := 100
     static _GuardLogNextTick := 0
-    ; 诊断构建：记录每个键上一次成功补发 up 的时刻，用于识别"同键极短间隔二次补发"（防递归护栏漏拍）。
-    ; 两份故障日志的最后一条热键记录都是同键 2ms 内重复补发，故单独观测。
-    static ReentryWindowMs := 200
+    ; 记录每个键上一次成功补发 up 的时刻，用于识别"同一按住周期内出现极短间隔二次补发"
+    static ReentryWindowMs := 50
     static _LastForwardTick := Map()
+    ; 每个键最近一次"真实按下"的时刻
+    static _LastForwardDownTick := Map()
 
     ; 判定当前时刻是否应记录守卫拦截日志：窗口内最多一条，窗口自然滑动，无需主动清理状态
     static ShouldLogGuard() {
@@ -44,21 +39,10 @@ class KeyForward {
             if ModNames.Has(StrLower(pureKey))
                 pureKey := side ModNames[StrLower(pureKey)]
         }
-        ; Hotkey 名称大小写不敏感，但 Map 键默认大小写敏感；统一字母键名称，
-        ; 避免同一物理键因首次注册拼写不同（如 Issue #240 的 a/A）而漏掉 Up。
+        ; Hotkey 名称大小写不敏感，但 Map 键默认大小写敏感；统一字母键名称，避免同一物理键因首次注册拼写不同而漏掉 Up
         return StrLower(GetKeyName(pureKey))
     }
-    ; 透传原热键给游戏（守卫拦截时调用，只拦 AFA 功能不吞原键）
-    ; - 带 ~ 前缀的热键按键本就透传，无需补发，避免重复输入
-    ; - 按下型热键：按键被 AFA 吞掉，补发 key down 并记录标志；key up 由 Up 变体热键回调（ActionUpForward）补发，事件驱动无阻塞
-    ; - Up 型热键（松开暂停）：非拦截键带 ~ 前缀，down 未被吞；被拦截键会被 AHK 整键接管（Hotkeys.htm：
-    ;   "An Up hotkey without a normal/down counterpart hotkey will completely take over that key"）——
-    ;   **down 也被吞**，且 Up 型热键没有 Down 热键给透传机会，故此处须补发完整按下（down→delay→up），
-    ;   否则关卡外该键输入整次丢失（如"松开时暂停"绑定 Space 后无法输入空格）
-    ; - 滚轮等无 down/up 状态的事件：直接发送完整事件（同 action 尾部 Wheel 处理）
-    ; - {Blind}：默认 Send 会临时改写 CapsLock（SetStoreCapsLockMode 默认开启）并释放-重注入物理按住的修饰键，
-    ;   透传的注入事件会被按“小写/无修饰”翻译——大写锁定开启或按住 Shift 时游戏收不到物理状态对应的字符；
-    ;   Blind 保持两者状态不变，注入即物理状态的忠实镜像（与直接按键产生的输入完全一致）
+    ; 透传原热键给游戏
     static ForwardOriginalKey(ThisHotkey) {
         if (ThisHotkey == "")
             return
@@ -69,9 +53,6 @@ class KeyForward {
         if (pureKey == "")
             return
         ; 滚轮：无 down/up 状态，直接发送完整事件
-        ; 注入改用原生 mouse_event：AHK Send 注入的滚轮事件带 KEY_IGNORE_LEVEL(0) 标记（0xFFC3D44D），
-        ; 部分用户环境的输入监听组件会对此标记做出响应（如系统提示音）；mouse_event 走同一输入队列
-        ; 但无该标记，且 {Blind} 语义天然满足（不触碰修饰键状态，不夺焦点）。
         if InStr(pureKey, "Wheel") {
             hw := 0
             if (pureKey = "WheelUp")
@@ -90,8 +71,6 @@ class KeyForward {
             return
         }
         if isUp {
-            ; InterceptedKeys 记录"down 已补发"：常规 Down 型热键的 down 已由主热键透传，只补发 up；
-            ; 无记录说明 down 从未到达游戏（AHK 对无 ~ 的 Up 热键整键接管吞掉了 down）——补发完整按下。
             if !this.InterceptedKeys.Has(pureKey)
                 Send "{Blind}{" pureKey " Down}"
             Send "{Blind}{" pureKey " Up}"
@@ -100,73 +79,287 @@ class KeyForward {
         ; 长按自动重复期间只保留一组逻辑 Down/Up。
         if this.InterceptedKeys.Has(pureKey)
             return
+        ; 记录真实按下时刻
+        this._LastForwardDownTick[pureKey] := A_TickCount
         this.InterceptedKeys[pureKey] := true
         try {
             Send "{Blind}{" pureKey " Down}"
-            Logger.Debug("KeyForward", "透传 Down：key=" pureKey)
         } catch Error as e {
             this.InterceptedKeys.Delete(pureKey)
             Logger.Exception("KeyForward", e, "透传 Down 失败：key=" pureKey)
             throw
         }
     }
-    ; Up 变体热键统一回调：被拦截的键松开时一律补发 key up
-    ; 原因：AHK Send 对物理按住的修饰键会做“释放-重注入”（Send.htm：默认 Send 等价 {Blind}{Ctrl up}x{Ctrl down}），
-    ; 而被拦截（无 ~）的修饰键物理 up 也被吞；若只在 ForwardOriginalKey 置位时才补发 up，
-    ; 关卡内路径（动作正常执行、未走透传）会漏掉 Up，导致修饰键在 OS 层卡住（如 GameSpeed=<SHIFT）。
-    ; 补发对未按下的键是无害 no-op，故无条件补发（不再依赖 InterceptedKeys 标志）；
-    ; 唯一抑制条件：该键处于“注入按下未完成”窗口（GameKeys.InjectedPressKeys）——注入动作自管完整按下
-    ; （注入 down→up）时，物理松开的补发 up 若与注入 down 落在同一画面帧，游戏的帧开头轮询只读到 up，
-    ; 注入的按下整次丢失（见 AGENTS.md“帧开头轮询”知识点）。{Blind} 理由同 ForwardOriginalKey。
+    ; Up 变体热键统一回调：结束按住周期，并给被拦截的键补发 key up
     static ActionUpForward(ThisHotkey) {
-        HookHealth.NoteFire()
         pureKey := this.PureKeyName(ThisHotkey)
+        HookHealth.NoteFire(pureKey)
         if (pureKey == "")
             return
-        ; 防递归：Send 补发的 up 会被钩子重新捕获触发本变体，补发期间同名键直接返回（键级作用域，不挡其它键）
+        HoldGuard.EndHoldMs(pureKey)
+        ; 防递归
         if KeyForward.SuppressUp.Has(pureKey)
             return
-        ; 注入按下未完成（注入 down 已发、注入 up 未发）：抑制补发。物理 up 仍被本热键（无 ~）吞掉不会漏到游戏，
-        ; 游戏收到的是注入动作自管的完整按下；注入 up 由 GameKeys.SendUp 先清标记再发送，故注入 up 自身触发本回调
-        ; （SendEvent 降级路径）时标记已清除，仍会补发，不会在游戏内卡键。
+        ; 迟到抬起
+        if HoldGuard.WasClosedByFallback(pureKey) {
+            Logger.Debug("KeyForward", "迟到抬起：key=" pureKey "（该按住周期已由兜底路径收尾，跳过补发）")
+            return
+        }
         if GameKeys.IsInjectedPressPending(pureKey) {
             Logger.Debug("KeyForward", "抑制透传 Up：key=" pureKey "（注入按下未完成，避免同帧补发吞掉注入按下）")
             return
         }
-        ; 诊断构建：同键在极短间隔内二次补发 = 防递归护栏漏了一拍（注入的 up 又触发了本变体）。
-        ; 两份故障日志的最后一条热键记录都是"同键 2ms 内重复补发"，故在此升级为 WARN 并带现场状态。
         prevTick := this._LastForwardTick.Has(pureKey) ? this._LastForwardTick[pureKey] : 0
-        if (prevTick != 0 && A_TickCount - prevTick <= this.ReentryWindowMs) {
-            Logger.Warn("KeyForward", "Up 补发回环：key=" pureKey "，距上次补发 " (A_TickCount - prevTick) "ms"
-                . "，DownHandled=" (KeyForward.DownHandled.Has(pureKey) ? "1" : "0")
-                . "，Intercepted=" (this.InterceptedKeys.Has(pureKey) ? "1" : "0")
-                . "，A_ThisHotkey=" ThisHotkey)
+        if (prevTick != 0 && A_TickCount - prevTick <= this.ReentryWindowMs && this._LastForwardDownTick.Has(pureKey)) {
+            if (this._LastForwardDownTick[pureKey] < prevTick) {
+                Logger.Debug("KeyForward", "Up 补发疑似回环：key=" pureKey "，距上次补发 " (A_TickCount - prevTick) "ms"
+                    . "，DownHandled=" (KeyForward.DownHandled.Has(pureKey) ? "1" : "0")
+                    . "，Intercepted=" (this.InterceptedKeys.Has(pureKey) ? "1" : "0")
+                    . "，A_ThisHotkey=" ThisHotkey)
+            }
         }
         this._LastForwardTick[pureKey] := A_TickCount
         KeyForward.SuppressUp[pureKey] := true
         try {
             Send "{Blind}{" pureKey " Up}"
-            ; 关卡内路径未走 ForwardOriginalKey，flag 不存在；Delete 对不存在的键会抛 UnsetItemError，需先检查
             if (this.InterceptedKeys.Has(pureKey))
                 this.InterceptedKeys.Delete(pureKey)
             if (KeyForward.DownHandled.Has(pureKey))
                 KeyForward.DownHandled.Delete(pureKey)
-            Logger.Debug("KeyForward", "透传 Up：key=" pureKey)
+            downTick := this._LastForwardDownTick.Get(pureKey, 0)
+            if (downTick != 0)
+                Logger.Debug("KeyForward", "透传 key=" pureKey "（按住 " (A_TickCount - downTick) "ms）")
+            else
+                Logger.Debug("KeyForward", "透传 Up：key=" pureKey "（无配对按下记录）")
         } catch Error as e {
             Logger.Exception("KeyForward", e, "透传 Up 失败：key=" pureKey)
         } finally {
-            ; Delete 对不存在的键会抛 UnsetItemError（AGENTS.md 已记录该陷阱）——
-            ; 交错补发时本键可能已被另一线程清除，finally 内抛异常会掩盖 try 内的真实错误。
-            if (KeyForward.SuppressUp.Has(pureKey))
+            try {
                 KeyForward.SuppressUp.Delete(pureKey)
+            } catch UnsetItemError {
+            }
         }
     }
 }
 
+class HoldGuard {
+    static PollIntervalMs := 25            ; 兜底轮询间隔
+    static HoldLogIntervalMs := 3000       ; 按住周期活跃时的节流观测
+    static LateUpWindowMs := 1000          ; 兜底收尾后，抑制迟到物理 up 的时间窗
+    static PollHeartbeatMs := 5000         ; 轮询心跳观测间隔（诊断用）
+    static SwallowDetectDelayMs := 1000    ; 结束按住周期后仍认为按下多久即判定抬起被吞（诊断用）
+
+    static _Holds := Map()                 ; pureKey -> {tick, name}
+    static _Tails := Map()                 ; pureKey -> 按住周期结束时执行的收尾回调
+    static _PhysDown := Map()              ; pureKey -> 定时器最近一次看到的物理态
+    static _ClosedTick := Map()            ; pureKey -> 最近一次由兜底路径关闭按住周期的时刻
+    static _LastLogTick := Map()
+    static _ClosedCycle := Map()           ; pureKey -> 结束按住周期的 tick（抬起被吞自检用）
+    static _IsGatedKey := Map()            ; pureKey -> false 表示该键不参与按住去重
+    static _LastHeartbeatTick := 0
+    static _PollTicks := 0
+    static _Timer := ""
+
+    static Init() {
+        this._Holds.CaseSense := false
+        this._Tails.CaseSense := false
+        this._PhysDown.CaseSense := false
+        this._ClosedTick.CaseSense := false
+        this._LastLogTick.CaseSense := false
+        this._ClosedCycle.CaseSense := false
+        this._IsGatedKey.CaseSense := false
+        if (this._Timer = "") {
+            this._Timer := HoldGuard.Poll.Bind(HoldGuard)
+            SetTimer this._Timer, this.PollIntervalMs
+            Logger.Info("HoldGuard", "兜底轮询已启动，间隔=" this.PollIntervalMs "ms（物理态校验 + 跳变自愈）")
+        }
+    }
+
+    ; 清空状态（热键重建/禁用时调用）
+    static Stop() {
+        this._Holds.Clear()
+        this._Tails.Clear()
+        this._PhysDown.Clear()
+        this._ClosedTick.Clear()
+        this._LastLogTick.Clear()
+        this._ClosedCycle.Clear()
+        this._IsGatedKey.Clear()
+    }
+
+    ; 该键是否参与按住去重
+    static ShouldGate(pureKey) {
+        if (pureKey = "" || InStr(pureKey, "wheel"))
+            return false
+        return this._IsGatedKey.Get(pureKey, true)
+    }
+
+    ; _RegisterOne 登记不参与去重的键（Up 型热键等）
+    static MarkUngated(pureKey) {
+        if (pureKey != "")
+            this._IsGatedKey[pureKey] := false
+    }
+
+    ; 动作入口调用
+    static TryBegin(pureKey, actionName := "") {
+        if (pureKey = "")
+            return false
+        if (this._Holds.Has(pureKey))
+            return true
+        this._Holds[pureKey] := {tick: A_TickCount, name: actionName}
+        this._LastLogTick[pureKey] := A_TickCount
+        if (this._ClosedCycle.Has(pureKey))
+            this._ClosedCycle.Delete(pureKey)
+        return false
+    }
+
+    ; 注册按住周期结束时的收尾回调
+    static RegisterTail(pureKey, fn) {
+        if (pureKey = "")
+            return
+        this._Tails[pureKey] := fn
+    }
+
+    ; 物理抬起
+    static EndHoldMs(pureKey, reason := "up") {
+        if (pureKey = "" || !this._Holds.Has(pureKey))
+            return 0
+        held := A_TickCount - this._Holds[pureKey].tick
+        this._Holds.Delete(pureKey)
+        if (this._LastLogTick.Has(pureKey))
+            this._LastLogTick.Delete(pureKey)
+        if (this._PhysDown.Has(pureKey))
+            this._PhysDown.Delete(pureKey)
+        if (reason = "fallback") {
+            this._ClosedTick[pureKey] := A_TickCount
+            Logger.Debug("HoldGuard", "兜底结束按住周期：key=" pureKey "，按住 " held "ms（物理态已抬起或跳变自愈；"
+                . "数百 ms 内的短按多为此前动作处于 Critical 段导致 Up 变体迟到，属预期）")
+        } else {
+            if (this._ClosedTick.Has(pureKey))
+                this._ClosedTick.Delete(pureKey)
+            if (held >= this.HoldLogIntervalMs)
+                Logger.Debug("HoldGuard", "按住周期结束：key=" pureKey "，按住 " held "ms")
+        }
+        this._ClosedCycle[pureKey] := A_TickCount
+        this._RunTail(pureKey)
+        return held
+    }
+
+    ; 该键的按住周期是否刚由兜底路径结束
+    static WasClosedByFallback(pureKey) {
+        if (pureKey = "" || !this._ClosedTick.Has(pureKey))
+            return false
+        closed := this._ClosedTick[pureKey]
+        this._ClosedTick.Delete(pureKey)
+        return (A_TickCount - closed) <= this.LateUpWindowMs
+    }
+
+    static ActiveCount() {
+        return this._Holds.Count
+    }
+
+    ; 观测用
+    static Snapshot() {
+        if (this._Holds.Count = 0)
+            return "(无)"
+        now := A_TickCount
+        parts := ""
+        for pureKey, info in this._Holds {
+            physDown := this._PhysDown.Has(pureKey) && this._PhysDown[pureKey]
+            parts .= (parts = "" ? "" : " ") pureKey "+" (now - info.tick) "ms(phys=" (physDown ? "down" : "up") ")"
+        }
+        return parts
+    }
+
+    static _PhysDownSnapshot() {
+        parts := ""
+        for pureKey, _ in this._Holds
+            parts .= (parts = "" ? "" : " ") pureKey "=" (this._PhysDown.Has(pureKey) && this._PhysDown[pureKey] ? "down" : "up/unknown")
+        return (parts = "" ? "(无)" : parts)
+    }
+
+    static _RunTail(pureKey) {
+        if !this._Tails.Has(pureKey)
+            return
+        fn := this._Tails[pureKey]
+        this._Tails.Delete(pureKey)
+        try {
+            fn()
+        } catch Error as e {
+            Logger.Exception("HoldGuard", e, "按住周期收尾回调失败：key=" pureKey)
+        }
+    }
+
+    ; 兜底轮询
+    static _VerifyReleased() {
+        for pureKey, closedTick in this._ClosedCycle.Clone() {
+            if !this.ShouldGate(pureKey) {
+                this._ClosedCycle.Delete(pureKey)
+                continue
+            }
+            if !this._Holds.Has(pureKey) && GetKeyState(pureKey, "P") = 0 {
+                this._ClosedCycle.Delete(pureKey)
+                continue
+            }
+            if (A_TickCount - closedTick >= this.SwallowDetectDelayMs) {
+                this._ClosedCycle.Delete(pureKey)
+                if this._Holds.Has(pureKey)
+                    continue
+                Logger.Warn("HoldGuard", "抬起被吞：key=" pureKey "（结束按住周期已 " (A_TickCount - closedTick)
+                    . "ms，系统仍认为该键处于按下）。该键的抬起事件未到达系统，属设备/驱动层丢事件；"
+                    . "在被吞状态清除前，系统与游戏都会认为该键一直被按住")
+            }
+        }
+    }
+
+    static Poll() {
+        this._PollTicks++
+        if (this._Holds.Count = 0) {
+            this._VerifyReleased()
+            return
+        }
+        now := A_TickCount
+        if (now - this._LastHeartbeatTick >= this.PollHeartbeatMs) {
+            this._LastHeartbeatTick := now
+            Logger.Debug("HoldGuard", "轮询心跳：tick=" this._PollTicks "，活跃按住周期=" this._Holds.Count "，物理态=" this._PhysDownSnapshot())
+        }
+        for pureKey, info in this._Holds {
+            isDown := false
+            try {
+                isDown := GetKeyState(pureKey, "P") = 1
+            } catch Error {
+                isDown := true    ; 键名不可查询时保守按"仍按下"处理，交给跳变路径
+            }
+            if !this._PhysDown.Has(pureKey) {
+                this._PhysDown[pureKey] := isDown
+                continue
+            }
+            prevDown := this._PhysDown[pureKey]
+            this._PhysDown[pureKey] := isDown
+
+            if !isDown {
+                this.EndHoldMs(pureKey, "fallback")
+                continue
+            }
+            if !prevDown {
+                Logger.Warn("HoldGuard", "按住周期自愈：key=" pureKey "，检测到抬起事件丢失后的新按下"
+                    . "（按住周期已持续 " (now - info.tick) "ms）")
+                this.EndHoldMs(pureKey, "fallback")
+                continue
+            }
+            if (now - this._LastLogTick.Get(pureKey, 0) >= this.HoldLogIntervalMs) {
+                this._LastLogTick[pureKey] := now
+                Logger.Debug("HoldGuard", "按住周期：key=" pureKey " 已按住 " Round((now - info.tick) / 1000, 1)
+                    . "s（物理态仍为按下；正常长按，若用户已松手则是抬起事件丢失、等待跳变自愈）")
+            }
+        }
+        this._VerifyReleased()
+    }
+}
+
 ; == 功能实现 ==
-; -- 常规作战 --
-; 按下暂停
 class HotkeyActions {
+    ; -- 常规作战 --
+    ; 按下暂停
     static ActionPressPause(ThisHotkey) {
         if !GuardInLevel("ActionPressPause", ThisHotkey)
             return
@@ -184,7 +377,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 松开暂停
@@ -211,18 +403,17 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
-    ; 前进16ms
+    ; 前进档位1，原先为前进16ms，现可自定义
     static Action16ms(ThisHotkey) {
         this._FrameSkip("Action16ms", "FrameSkip16msDelay", ThisHotkey)
     }
-    ; 前进33ms，由于波动，过帧间隔设置为30ms，避免一次过两帧
+    ; 前进档位2，原先为前进33ms
     static Action33ms(ThisHotkey) {
         this._FrameSkip("Action33ms", "FrameSkip33msDelay", ThisHotkey)
     }
-    ; 前进166ms
+    ; 前进档位3，原先为前进166ms
     static Action166ms(ThisHotkey) {
         this._FrameSkip("Action166ms", "FrameSkip166msDelay", ThisHotkey)
     }
@@ -249,7 +440,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 暂停选中
@@ -283,7 +473,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 发送技能键
@@ -297,7 +486,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 发送撤退键
@@ -311,7 +499,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 一键技能
@@ -335,7 +522,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 一键撤退
@@ -360,7 +546,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 暂停技能
@@ -382,7 +567,6 @@ class HotkeyActions {
         }
         Logger.Debug("HotkeyActions", "ActionPauseSkill 执行，key=" KeyForward.PureKeyName(ThisHotkey))
         MouseGetPos &xpos, &ypos
-        ; NoTimers 挡定时器轮询的时序干扰，允许其他热键中断（Critical 会连热键一起挡）
         Thread "NoTimers"
         TouchInjector.Tap(PosL.PBLX, PosL.PBLY)
         TouchInjector.Tap(xpos, ypos)
@@ -399,7 +583,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 暂停撤退
@@ -421,7 +604,6 @@ class HotkeyActions {
         }
         Logger.Debug("HotkeyActions", "ActionPauseRetreat 执行，key=" KeyForward.PureKeyName(ThisHotkey))
         MouseGetPos &xpos, &ypos
-        ; NoTimers 挡定时器轮询的时序干扰，允许其他热键中断（Critical 会连热键一起挡）
         Thread "NoTimers"
         TouchInjector.Tap(PosL.PBLX, PosL.PBLY)
         TouchInjector.Tap(xpos, ypos)
@@ -438,7 +620,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
 
@@ -461,7 +642,6 @@ class HotkeyActions {
         }
         Logger.Debug("HotkeyActions", "ActionSwitchView 执行，key=" KeyForward.PureKeyName(ThisHotkey))
         MouseGetPos &xpos, &ypos
-        ; NoTimers 挡定时器轮询的时序干扰，允许其他热键中断（Critical 会连热键一起挡）
         Thread "NoTimers"
         TouchInjector.Tap(PosL.PBLX, PosL.PBLY)
         TouchInjector.Tap(xpos, ypos)
@@ -472,7 +652,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 快捷切换开局暂停开关
@@ -483,7 +662,16 @@ class HotkeyActions {
         EventBus.Publish("SettingsValueChangeRequested", {key: "AutoBeginPause", value: newValue})
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
+    }
+
+    ; 快捷切换开局自动二倍速开关
+    static ActionBeginSpeedSwitch(ThisHotkey) {
+        currentValue := Config.GetImportant("AutoBeginSpeed")
+        newValue := (currentValue = "1") ? "0" : "1"
+        ; 只发布设置变更请求，由 SettingsService 执行持久化与刷新
+        EventBus.Publish("SettingsValueChangeRequested", {key: "AutoBeginSpeed", value: newValue})
+        if InStr(ThisHotkey, "Wheel")
+            return
     }
 
     ; 模拟鼠标左键点击
@@ -495,14 +683,14 @@ class HotkeyActions {
             return
         }
         Logger.Debug("HotkeyActions", "ActionLButtonClick 执行，key=" KeyForward.PureKeyName(ThisHotkey))
-        Send "{LButton Down}"
         if InStr(ThisHotkey, "Wheel") {
+            Send "{LButton Down}"
             Send "{LButton Up}"
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
-        Send "{LButton Up}"
+        Send "{LButton Down}"
+        HoldGuard.RegisterTail(KeyForward.PureKeyName(ThisHotkey), (*) => Send("{LButton Up}"))
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 放弃行动
@@ -513,7 +701,6 @@ class HotkeyActions {
         GameKeys.SendUp("battleLeftPopup")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 跳过招募动画/剧情
     static ActionSkip(ThisHotkey) {
@@ -522,7 +709,6 @@ class HotkeyActions {
     ; 返回上级菜单
     static ActionBack(ThisHotkey) {
         Logger.Debug("HotkeyActions", "ActionBack 执行，key=" KeyForward.PureKeyName(ThisHotkey))
-        ; ESC 同帧竞态防护：ESC 也在拦截正则内（守卫热键绑定 ESC 时），物理松开的补发 up 与注入 down 同帧会丢失按下
         GameKeys.MarkInjectedPress("Escape")
         Send "{ESC Down}"
         ; 勾选"使用“返回上级菜单”放弃行动"时，ESC 后补发 battleLeftPopup（还原旧版放弃行动行为）
@@ -539,7 +725,6 @@ class HotkeyActions {
         }
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 基建快速收取
     static ActionHarvest(ThisHotkey) {
@@ -578,7 +763,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; -- 卫戍协议 --
@@ -588,7 +772,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessViewEnemy")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 调度中心
     static ActionDispatchCenter(ThisHotkey) {
@@ -596,7 +779,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessShop")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 冻结
     static ActionFreeze(ThisHotkey) {
@@ -604,7 +786,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessFreeze")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 刷新
     static ActionRefresh(ThisHotkey) {
@@ -612,7 +793,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessRefresh")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 升级
     static ActionUpgrade(ThisHotkey) {
@@ -620,7 +800,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessLevelUp")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 卫戍协议撤退
     static ActionStrongHoldProtocolRetreat(ThisHotkey){
@@ -631,7 +810,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 出售/销毁
@@ -640,7 +818,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessSale")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 准备就绪
     static ActionReady(ThisHotkey) {
@@ -648,7 +825,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessReady")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 卫戍协议一键撤退
     static ActionStrongHoldProtocolOneClickRetreat(ThisHotkey) {
@@ -659,7 +835,6 @@ class HotkeyActions {
             return
         }
         Logger.Debug("HotkeyActions", "ActionStrongHoldProtocolOneClickRetreat 执行，key=" KeyForward.PureKeyName(ThisHotkey))
-        ; NoTimers 挡定时器轮询的时序干扰，允许其他热键中断（Critical 会连热键一起挡）
         Thread "NoTimers"
         Send "{LButton Down}"
         Send "{LButton Up}"
@@ -670,7 +845,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 一键出售/销毁
@@ -690,7 +864,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 一键购买
@@ -711,44 +884,23 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
-
-    ; == 工具函数 ==
-    ; 去除修饰符前缀
 }
 
-PureKeyWait(ThisHotkey) {
-    if (ThisHotkey == "")
-        return
-    pureKey := KeyForward.PureKeyName(ThisHotkey)
-    ; 诊断构建：分段等待，语义与原 KeyWait(pureKey) 完全一致（仍然无限等待物理松开），只增加观测。
-    ; KeyWait 默认等待的是**物理**释放，而物理状态由键盘钩子维护（ahk_docs/lib/KeyWait.htm）——
-    ; 钩子一旦被系统摘除，此处会永久挂起，动作线程堆满 #MaxThreads(默认 10) 后所有热键都无法启动。
-    idx := 0
-    while !KeyWait(pureKey, "T3") {
-        idx++
-        if (idx = 1 || Mod(idx, 10) = 0)
-            Logger.Warn("KeyForward", "等待物理松开已 " (idx * 3) "s：key=" pureKey "（钩子失效时此处会永久挂起并占用线程）")
-    }
-}
+; == 工具函数 ==
 ; 关卡守卫：在关卡内返回 true；拦截时透传原键并记录日志，返回 false
-; 判定依据：LevelDetector 投票状态机维护的 LevelDetector.IsInLevel()（读内存标志，无像素检测、无 DPI 切换）
-; 守卫关闭（InLevelGuard=0）时 LevelDetector 停止轮询并强制 InLevel=true，此处直接放行，无 I/O
-; 拦截是预期行为（非异常），用 Info 级别避免刷 critical 轨（WARN/ERROR 5 MiB 留给真正的问题）
 GuardInLevel(actionName, ThisHotkey) {
     pureKey := KeyForward.PureKeyName(ThisHotkey)
-    ; 主热键（down）触发即记录该键已被 AFA 处理，Up 变体据此决定补发 up；Up 变体（含 OnUp 型）不记录；
-    ; PureKeyName 为空时不记录，避免 DownHandled 出现 "" 键干扰后续逻辑
-    if !RegExMatch(ThisHotkey, " Up$") && pureKey != ""
+    ; 主热键（down）触发即记录该键已被 AFA 处理，Up 变体据此决定补发 up；Up 变体（含 OnUp 型）不记录
+    if !RegExMatch(ThisHotkey, " Up$") && pureKey != "" {
         KeyForward.DownHandled[pureKey] := true
+        ; 新的真实按下：标记"上一次补发到此为止"，避免把下一个按住周期的补发误判成回环
+        KeyForward._LastForwardDownTick[pureKey] := A_TickCount
+    }
     if LevelDetector.IsInLevel()
         return true
-    ; 同一按住周期的重复 down（InterceptedKeys 已有，已补发过）不再记日志，避免切走时 key repeat 刷屏；
-    ; 滚轮不写 InterceptedKeys，每次独立滚动都走拦截路径（无极/高分辨率滚轮可达数百次/秒）——
-    ; 逐条落盘会形成每档位一次文件 IO 的洪峰，故滚轮按 100ms 时间窗节流（ShouldLogGuard），
-    ; 普通键维持 InterceptedKeys 去重语义（按住周期内一条）
+    ; 同一按住周期的重复 down（InterceptedKeys 已有，已补发过）不再记日志
     isWheel := InStr(pureKey, "wheel")
     if !KeyForward.InterceptedKeys.Has(pureKey) && (!isWheel || KeyForward.ShouldLogGuard())
         Logger.Info("HotkeyActions", actionName " 被关卡检测拦截（不在关卡界面）")
@@ -845,12 +997,10 @@ HotkeyActionsStart() {
     KeyForward.DownHandled.CaseSense := false
     KeyForward.SuppressUp.CaseSense := false
     KeyForward._LastForwardTick.CaseSense := false
+    KeyForward._LastForwardDownTick.CaseSense := false
     GameKeys.InjectedPressKeys.CaseSense := false
+    HoldGuard.Init()
     TouchInjector.Init(3, 1)
-
-    ; #289：Client 模式下 MouseGetPos 相对“当前活动窗口”，启动时可能是托盘菜单/资源管理器。
-    ; 统一切到 Screen 取点；触控注入由 MoveFromScreen 换算成游戏客户区坐标；
-    ; MouseMove 在 Screen 模式下还原光标，不受活动窗口切换影响。
     prevMouseCoordMode := CoordMode("Mouse", "Screen")
     try {
         MouseGetPos &screenX, &screenY

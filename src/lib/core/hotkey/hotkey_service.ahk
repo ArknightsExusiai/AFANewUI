@@ -1,53 +1,36 @@
 ; == 热键控制 ==
-; 热键上下文判定（HotIf 回调）：Up 变体查状态、鼠标键查悬停、键盘键查活动窗口
-; 背景：点击任务栏/桌面等不抢占前台的区域时，游戏仍是"活动窗口"，旧判定 HotIfWinActive
-; 会把窗口外的鼠标按下误判为游戏内操作——绑定在鼠标键上的热键被误触发，且因无 ~ 前缀
-; 在钩子层吞掉点击，导致窗口外右键无法正常到达任务栏/桌面。
-; HotIf.htm：条件不成立时热键执行原生功能（像没有这个热键一样透传给系统）。
-; - Up 变体（守卫拦截补发）：若该键 down 已被 AFA 主热键处理过（DownHandled 有记录），放行补发 key up
-;   ——与窗口状态无关，解决"按住从游戏内拖出/Alt+Tab 切走后再松开"的卡键（含上次遗留的失焦边界）。
-; - 鼠标键/滚轮：鼠标悬停在游戏窗口上才触发（窗口外点击透传给系统）。
-; - 键盘键：游戏窗口为活动窗口，或（启用失焦悬停操作时）鼠标悬停在游戏窗口上才触发——失焦悬停开关
-;   （HotkeyService._HoverOperate，由"自定义"页复选框控制，保存/应用后生效）关闭后键盘键仅当游戏为活动窗口时才触发；
-;   动作层统一包装负责激活游戏窗口并恢复原窗口。鼠标键/滚轮不受开关影响，仍只受悬停判定约束。
+
 HotkeyContext(hotkeyName) {
     pureKey := KeyForward.PureKeyName(hotkeyName)
     if (pureKey = "")
         return false
-    ; Up 变体（守卫补发型）：仅当该键的 down 已被 AFA 主热键处理过（DownHandled 有记录，无论守卫放行/拦截）
-    ; 才放行补发 key up——覆盖失焦/拖出卡键；游戏外主热键不触发（down 透传）则不放行，物理 up 正常透传（打字不受影响）。
+    evalStart := Qpc()
+
+    ; Up 变体（守卫补发型）
     if RegExMatch(hotkeyName, " Up$") {
-        ; 补发 up 期间钩子会捕获 Send 注入的 up，若仍放行会递归触发 Up 变体无限循环（游戏外按键失灵）。
-        ; 仅抑制同名键（键级作用域）——全局布尔会在多键同松时误挡其它键的 Up 变体（卡键），须按键判断。
         if KeyForward.SuppressUp.Has(pureKey)
-            return false
+            return HotkeyService._TraceEval(hotkeyName, pureKey, evalStart, false)
         if KeyForward.DownHandled.Has(pureKey)
-            return true
+            return HotkeyService._TraceEval(hotkeyName, pureKey, evalStart, true)
     }
     ; 鼠标键/滚轮：悬停判定
     if (pureKey ~= "i)^(lbutton|rbutton|mbutton|xbutton1|xbutton2|wheel)")
-        return IsMouseInClient()
-    ; 键盘键：优先使用热路径廉价校验（前台 hwnd→pid 与缓存比对）；
-    ; 缓存未命中时回退旧语义并投递异步补识别，不在判定线程内做重 IO。
+        return HotkeyService._TraceEval(hotkeyName, pureKey, evalStart, IsMouseInClient())
+    ; 键盘键：优先热路径廉价校验，未命中才回退 WinActive 判定并异步补识别
     if GameTarget.IsForegroundCached()
-        return true
+        return HotkeyService._TraceEval(hotkeyName, pureKey, evalStart, true)
     if WinActive(GameTarget.WinTitle()) {
         GameClientRegistry.ScheduleRefresh()
-        return true
+        return HotkeyService._TraceEval(hotkeyName, pureKey, evalStart, true)
     }
-    ; 失焦悬停操作开关关闭后，键盘键仅当游戏为活动窗口时才触发
-    return HotkeyService.GetHoverOperate() && IsMouseInClient()
+    return HotkeyService._TraceEval(hotkeyName, pureKey, evalStart, HotkeyService.GetHoverOperate() && IsMouseInClient())
 }
 
 class HotkeyService {
-    ; 热键状态
     static HotkeyState := true
 
-    ; 失焦悬停路径下等待游戏窗口激活的超时（#340）：该等待期线程不可中断，
-    ; 必须显著小于系统低级钩子超时（LowLevelHooksTimeout 默认 300ms），否则会累计钩子超时。
     static ActivateTimeoutMs := 200
 
-    ; 游戏失焦悬停操作开关（由 SettingsService 在保存/应用后刷新）
     static _HoverOperate := true
 
     static SetHoverOperate(value) {
@@ -58,19 +41,47 @@ class HotkeyService {
         return this._HoverOperate
     }
 
+    ; HotkeyContext 的统一出口：记录单次求值耗时并原样回传判定结果
+    static _TraceEval(hotkeyName, pureKey, evalStart, matched) {
+        elapsedMs := QpcMs(Qpc() - evalStart)
+        if (elapsedMs >= 0) {
+            this._EvalCount++
+            this._EvalTotalMs += elapsedMs
+            if (elapsedMs > this._EvalMaxMs)
+                this._EvalMaxMs := elapsedMs
+            if (elapsedMs >= this.EvalWarnThresholdMs && A_TickCount >= this._NextEvalWarnTick) {
+                this._NextEvalWarnTick := A_TickCount + this._TelemetryWarnCooldownMs
+                Logger.Warn("Hotkey", "HotIf 求值耗时异常：本次 " Round(elapsedMs, 1) "ms（阈值 " this.EvalWarnThresholdMs
+                    . "ms），hotkey=" hotkeyName "，key=" pureKey "，累计求值=" this._EvalCount "，峰值=" Round(this._EvalMaxMs, 1) "ms")
+            }
+        }
+        return matched
+    }
+
     ; 热键域内部状态
     static _ActiveTab := "keyBind"
     static _Group := "combatQuick"
     static _SwitchKey := ""
 
-    ; 初始化热键服务
+    ; ---- 判定路径耗时观测（ctxEval）----
+    static _EvalCount := 0
+    static _EvalTotalMs := 0.0
+    static _EvalMaxMs := 0.0
+    static EvalWarnThresholdMs := 50
+    static _NextEvalWarnTick := 0
+    static _TelemetryWarnCooldownMs := 10000
+
+    ; 键位集合变更后通知探针立即重建监视表
+    static _NotifyWatchKeysChanged() {
+        HookHealth.RefreshWatchKeysNow()
+    }
+
     static Init() {
         HotkeyService._BuildActionCallbacks()
         HotkeyService._SubscribeEvents()
     }
 
-    ; 由 Schema + ActionBindings 生成 ActionCallbacks：
-    ; 行为标志只维护在 HotkeySchema，动作函数引用只维护在 ActionBindings。
+    ; 由 Schema + ActionBindings 生成 ActionCallbacks
     static _BuildActionCallbacks() {
         this.ActionCallbacks := Map()
         for item in HotkeySchema.Items {
@@ -87,13 +98,11 @@ class HotkeyService {
         }
     }
 
-    ; 内部：订阅热键事件（保留旧事件兼容，同时接入新事件契约）
+    ; 内部：订阅热键事件
     static _SubscribeEvents() {
-        ; Legacy 旧事件（兼容保留闭环，勿新增发布者）
         EventBus.Subscribe("HotkeyOff", (*) => this.HotkeyOff())          ; Legacy
         EventBus.Subscribe("UnsetSwitchKey", (*) => this.UnsetSwitchKey()) ; Legacy
         EventBus.Subscribe("SetSwitchKey", (*) => this.SetSwitchKey())     ; Legacy
-        ; 新事件契约
         EventBus.Subscribe("GameKeysChanged", (data) => this._HandleGameKeysChanged(data))
         EventBus.Subscribe("GameClientsChanged", (data) => this._HandleGameClientsChanged(data))
         EventBus.Subscribe("ForegroundClientChanged", (data) => this._HandleForegroundClientChanged(data))
@@ -106,12 +115,12 @@ class HotkeyService {
         EventBus.Subscribe("SettingsReset", (*) => this._HandleSettingsSavedOrApplied())
     }
 
-    ; 处理关卡状态变化（目前仅记录调试日志；守卫判定走 LevelDetector.IsInLevel() getter）
+    ; 处理关卡状态变化
     static _HandleInLevelChanged(data) {
         Logger.Debug("Hotkey", "关卡状态变化：inLevel=" data.inLevel)
     }
 
-    ; 处理游戏按键变更：总开关开启时才重建，修复“禁用后被注册表变更恢复”的 bug
+    ; 处理游戏按键变更
     static _HandleGameKeysChanged(data) {
         if (!this.HotkeyState)
             return
@@ -120,7 +129,7 @@ class HotkeyService {
         this.SetSwitchKey()
     }
 
-    ; 处理游戏客户端集合变化：拦截并集可能需要变化，重建热键
+    ; 处理游戏客户端集合变化
     static _HandleGameClientsChanged(data) {
         if (!this.HotkeyState)
             return
@@ -129,15 +138,13 @@ class HotkeyService {
         this.SetSwitchKey()
     }
 
-    ; 处理前台客户端变化：当前映射随前台切换，无需重建热键（热键全局唯一一套）
+    ; 处理前台客户端变化
     static _HandleForegroundClientChanged(data) {
         Logger.Debug("Hotkey", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
     }
 
     ; 处理 UI 标签页切换请求
     static _HandleActiveTabChangeRequested(data) {
-        ; “其他设置”页与“自定义按键”页是管理型标签页，不改变热键组/不重建热键
-        ; （自定义按键的生效范围由其“按键类型”决定，与所在标签页无关）
         if (data.tabName = "other" || data.tabName = "customKeys")
             return
         this._ActiveTab := data.tabName
@@ -150,7 +157,7 @@ class HotkeyService {
         EventBus.Publish("HotkeyGroupChanged", {group: this._Group})
     }
 
-    ; 处理设置变更：HoverOperate/SwitchHotkey 等热键相关配置即时刷新
+    ; 处理设置变更
     static _HandleSettingsChanged(data) {
         if (data.key = "HoverOperate")
             this.SetHoverOperate(data.value == "1")
@@ -160,7 +167,7 @@ class HotkeyService {
             this.EnableByTab(this._ActiveTab)
     }
 
-    ; 处理保存/应用/重置完成：从 INI 刷新热键相关配置并重建热键
+    ; 处理保存/应用/重置完成
     static _HandleSettingsSavedOrApplied() {
         this.SetHoverOperate(Config.ReadCustomFromIni("HoverOperate") == "1")
         if (this.HotkeyState)
@@ -168,12 +175,12 @@ class HotkeyService {
         this.SetSwitchKey()
     }
 
-    ; 当前激活的功能标签页（供设置域临时处理器重建热键）
+    ; 当前激活的功能标签页
     static GetActiveTab() {
         return this._ActiveTab
     }
 
-    ; 热键动作绑定表（id -> 动作函数引用；Guarded/OnUp/NoActivate 行为标志由 HotkeySchema 提供，不在此重复）
+    ; 热键动作绑定表（id -> 动作函数引用）
     static ActionBindings := Map(
         ; 常规作战
         "PressPause", HotkeyActions.ActionPressPause.Bind(HotkeyActions),
@@ -191,6 +198,7 @@ class HotkeyService {
         "PauseSkill", HotkeyActions.ActionPauseSkill.Bind(HotkeyActions),
         "PauseRetreat", HotkeyActions.ActionPauseRetreat.Bind(HotkeyActions),
         "AutoBeginPauseSwitch", HotkeyActions.ActionBeginPauseSwitch.Bind(HotkeyActions),
+        "AutoBeginSpeedSwitch", HotkeyActions.ActionBeginSpeedSwitch.Bind(HotkeyActions),
         ; 快捷操作
         "LButtonClick", HotkeyActions.ActionLButtonClick.Bind(HotkeyActions),
         "Harvest", HotkeyActions.ActionHarvest.Bind(HotkeyActions),
@@ -214,46 +222,38 @@ class HotkeyService {
         "StrongHoldProtocolBack", HotkeyActions.ActionBack.Bind(HotkeyActions)
     )
 
-    ; 热键回调映射表（由 HotkeySchema.Items + ActionBindings 自动生成）
+    ; 热键回调映射表
     static ActionCallbacks := Map()
 
-    ; 已激活热键映射表
     static ActiveHotkeys := Map()
 
-    ; 自定义按键注册信息（重建热键时由 _BuildCustomProfiles 刷新）：id -> {key, group, profile}
+    ; 自定义按键注册信息：id -> {key, group, profile}
     static CustomProfiles := Map()
 
-    ; 已激活启用/禁用热键快捷键
     static ActiveSwitchHotkey := ""
 
-    ; 包装动作回调（#213）：游戏失焦时鼠标悬停游戏即可操作——执行动作前激活游戏窗口（超时跳过）。
-    ; 激活后不恢复原窗口（焦点留在游戏，由用户自行切换回，避免焦点闪回影响观感）。
-    ; 判定层（HotkeyContext）负责判定触发，此处负责副作用（焦点切换），职责分离。
-    ; 用嵌套函数（闭包）捕获 fn 作为 Hotkey 回调（AHK 文档：闭包可用于 Hotkey，见 Functions.htm#closures）。
-    ; fn 是函数对象——AHK v2 中函数定义即同名只读变量（含 Func 对象），ActionCallbacks 的 Fn 存的是函数引用而非字符串，可直接调用。
+    ; 包装动作回调：失焦悬停时先激活游戏窗口
     static _WrapAction(fn) {
         Wrapped(ThisHotkey) {
-            ; 诊断构建：整个热键线程（含 WinActivate 等待段）纳入在飞统计，
-            ; 用于观测 KeyWait 线程泄漏（#MaxThreads 默认 10，堆满即所有热键无法启动）。
-            probe := HookHealth.EnterAction(IsObject(fn) ? fn.Name : fn)
+            probe := HookHealth.EnterAction(IsObject(fn) ? fn.Name : fn, KeyForward.PureKeyName(ThisHotkey))
             try {
-                ; 防御性检查：游戏窗口不存在则跳过（正常触发路径已由判定层保证存在，此处防异常阻塞）
-                if !GameTarget.Exists()
+                if HoldGuard.ShouldGate(KeyForward.PureKeyName(ThisHotkey))
+                    && HoldGuard.TryBegin(KeyForward.PureKeyName(ThisHotkey), IsObject(fn) ? fn.Name : fn)
                     return
-                ; #340：WinActivate/WinWaitActive 期间线程不可中断（misc/Threads.htm 明确列出），
-                ; 而此处每次热键都会执行，等待期主线程无法为钩子求值 HotIf，是钩子超时的第二大来源。
-                ; 游戏已在前台时（绝大多数触发）直接跳过激活；仅失焦悬停路径才等待，
-                ; 且超时压到 200ms，保证单次不可中断窗口不触及系统 300ms 红线。
+                if !GameTarget.Exists() {
+                    Logger.Warn("Hotkey", "动作跳过：目标游戏窗口不存在（key=" KeyForward.PureKeyName(ThisHotkey) "）")
+                    return
+                }
                 if !GameTarget.IsActive() {
                     GameTarget.Activate()
-                    ; 激活超时（游戏窗口异常不可激活）则跳过动作，避免按键发往非游戏窗口
-                    if !GameTarget.WaitActive(HotkeyService.ActivateTimeoutMs)
+                    if !GameTarget.WaitActive(HotkeyService.ActivateTimeoutMs) {
+                        Logger.Warn("Hotkey", "动作跳过：激活游戏窗口超时（key=" KeyForward.PureKeyName(ThisHotkey) "）")
                         return
+                    }
                 }
                 try {
                     fn(ThisHotkey)
                 } catch Error as e {
-                    ; 记录异常而非静默——动作内部出错需可排查（此前空 catch 会掩盖动作内部真实异常）
                     Logger.Error("Hotkey", "动作执行失败：fn=" (IsObject(fn) ? fn.Name : fn) ", error=" e.Message)
                 }
             } finally {
@@ -263,31 +263,56 @@ class HotkeyService {
         return Wrapped
     }
 
-    ; 注册单个热键（数据驱动：profile.OnUp=功能在松开时触发；profile.Guarded=拦截键注册 Up 变体补发透传）
-    ; 注意：属性访问用 HasOwnProp 判断——profile 无 OnUp/Guarded 属性时直接访问会抛 PropertyError
+    ; 观测包装：只做在飞统计，不激活窗口
+    static _WrapObserved(fn, label := "") {
+        Wrapped(ThisHotkey) {
+            probe := HookHealth.EnterAction(label != "" ? label : (IsObject(fn) ? fn.Name : fn), KeyForward.PureKeyName(ThisHotkey))
+            try {
+                if HoldGuard.ShouldGate(KeyForward.PureKeyName(ThisHotkey))
+                    && HoldGuard.TryBegin(KeyForward.PureKeyName(ThisHotkey), IsObject(fn) ? fn.Name : fn)
+                    return
+                fn(ThisHotkey)
+            } finally {
+                HookHealth.ExitAction(probe)
+            }
+        }
+        return Wrapped
+    }
+
+    ; 未拦截键的 Up 变体
+    static _WrapUpHold(ThisHotkey) {
+        HoldGuard.EndHoldMs(KeyForward.PureKeyName(ThisHotkey))
+    }
+
+    ; 注册单个热键
     static _RegisterOne(hotkeyValue, profile, pattern) {
+        callback := profile.HasOwnProp("NoActivate")
+            ? this._WrapObserved(profile.Fn)
+            : this._WrapAction(profile.Fn)
         if (profile.HasOwnProp("OnUp") && !InStr(hotkeyValue, "Wheel")) {
-            ; 松开暂停：功能在松开时触发（Up 变体注册）
+            HoldGuard.MarkUngated(KeyForward.PureKeyName(hotkeyValue))
             reg := (hotkeyValue ~= pattern) ? hotkeyValue " Up" : "~" hotkeyValue " Up"
-            Hotkey(reg, profile.HasOwnProp("NoActivate") ? profile.Fn : this._WrapAction(profile.Fn), "On")
+            Hotkey(reg, callback, "On")
             HotkeyService.ActiveHotkeys.Set(reg, reg)
             return
         }
         intercept := hotkeyValue ~= pattern
         reg := intercept ? hotkeyValue : "~" hotkeyValue
-        Hotkey(reg, profile.HasOwnProp("NoActivate") ? profile.Fn : this._WrapAction(profile.Fn), "On")
+        Hotkey(reg, callback, "On")
         HotkeyService.ActiveHotkeys.Set(reg, reg)
-        ; 有守卫的拦截键（非滚轮）：注册 Up 变体，松开时由 KeyForward.ActionUpForward 补发 key up
-        ; 注意：类静态方法引用需 Bind(KeyForward)——方法的 MinParams 含 self，直接传引用 Hotkey 回调验证会失败（Invalid callback function）
-        if (profile.HasOwnProp("Guarded") && intercept && !InStr(hotkeyValue, "Wheel")) {
-            Hotkey(hotkeyValue " Up", KeyForward.ActionUpForward.Bind(KeyForward), "On")
+        shouldRegisterUp := !InStr(hotkeyValue, "Wheel") && !(profile.HasOwnProp("OnUp"))
+        if shouldRegisterUp {
+            upCallback := (profile.HasOwnProp("Guarded") && intercept)
+                ? KeyForward.ActionUpForward.Bind(KeyForward)
+                : HotkeyService._WrapUpHold.Bind(HotkeyService)
+            Hotkey(hotkeyValue " Up", upCallback, "On")
             HotkeyService.ActiveHotkeys.Set(hotkeyValue " Up", hotkeyValue " Up")
         }
     }
 
     ; 启用热键
     static HotkeyOn(*) {
-        KeyForward.DownHandled.Clear()  ; 重建前清空运行时标记（保留 CaseSense）
+        KeyForward.DownHandled.Clear()
         KeyForward.SuppressUp.Clear()
         KeyForward.InterceptedKeys.Clear()
         GameKeys.InjectedPressKeys.Clear()
@@ -302,10 +327,11 @@ class HotkeyService {
             }
         }
         HotIf
-        ; 自定义按键：启动默认常规作战组 + 全局类型（与标准热键同一判定上下文）
+        ; 自定义按键：默认常规作战组 + 全局类型
         this._BuildCustomProfiles()
         this._EnableCustomGroup("combatQuick")
         this._EnableCustomGroup("all")
+        this._NotifyWatchKeysChanged()
         Logger.Info("Hotkey", "热键已启用，数量=" this.ActiveHotkeys.Count ", 明细: " this._BuildDetailList(Constants.KeyNames))
     }
 
@@ -322,7 +348,10 @@ class HotkeyService {
         KeyForward.SuppressUp.Clear()
         KeyForward.InterceptedKeys.Clear()
         GameKeys.InjectedPressKeys.Clear()
+        HoldGuard.Stop()
+        HookHealth.DiscardAllPending("热键禁用/重建")
         HotIf
+        this._NotifyWatchKeysChanged()
         if !silent
             Logger.Info("Hotkey", "热键已禁用")
     }
@@ -340,34 +369,20 @@ class HotkeyService {
             }
         }
         HotIf
+        this._NotifyWatchKeysChanged()
     }
 
-    ; 禁用指定组的热键
+    ; 禁用指定组的热键：直接按 ActiveHotkeys（注册表本身）注销，避免注销条件与注册条件不对称
     static DisableGroup(groupMap) {
         HotIf(HotkeyContext)
-        pattern := GameKeys.GetInterceptPattern()
-        for keyVar, _ in groupMap {
-            hotkeyValue := Config.ReadHotkeyFromIni(keyVar)
-            if (hotkeyValue != "") {
-                try Hotkey(hotkeyValue, , "Off")
-                try Hotkey("~" hotkeyValue, , "Off")
-                ; 仅注销并删除实际注册过的 Up 变体（与 _RegisterOne 同规则派生，保持 ActiveHotkeys 与实际注册一致）
-                if (this.ActionCallbacks.Has(keyVar)) {
-                    profile := this.ActionCallbacks[keyVar]
-                    if ((profile.HasOwnProp("OnUp") || profile.HasOwnProp("Guarded")) && !InStr(hotkeyValue, "Wheel") && hotkeyValue ~= pattern) {
-                        try Hotkey(hotkeyValue " Up", , "Off")
-                        this.ActiveHotkeys.Delete(hotkeyValue " Up")
-                    }
-                }
-                this.ActiveHotkeys.Delete(hotkeyValue)
-                this.ActiveHotkeys.Delete("~" hotkeyValue)
-                this.ActiveHotkeys.Delete("~" hotkeyValue " Up")
-            }
-        }
+        for reg, _ in this.ActiveHotkeys
+            try Hotkey(reg, , "Off")
+        this.ActiveHotkeys := Map()
         HotIf
+        this._NotifyWatchKeysChanged()
     }
 
-    ; 构建热键明细列表（用于日志）
+    ; 构建热键明细列表（日志用）
     static _BuildDetailList(keyMap) {
         list := ""
         for keyVar, _ in keyMap {
@@ -380,7 +395,7 @@ class HotkeyService {
         return "(无)"
     }
 
-    ; 构建当前活跃标签页的热键明细列表（用于日志）
+    ; 构建当前标签页的热键明细列表（日志用）
     static _BuildDetailForActiveTab(tabName) {
         if (tabName = "keyBind" || tabName = "quick")
             return "战斗=" this._BuildDetailList(Constants.CombatHotkeys) " | 快捷=" this._BuildDetailList(Constants.QuickHotkeys)
@@ -391,9 +406,8 @@ class HotkeyService {
 
     ; 根据标签页启用对应热键组
     static EnableByTab(tabName) {
-        this.HotkeyOff(true)  ; 先静默禁用所有热键，重建完成后记录最终状态
+        this.HotkeyOff(true)
         this._BuildCustomProfiles()
-        ; 防御：customKeys 为管理型标签页（正常不会作为参数传入），按当前组重建
         if (tabName = "customKeys")
             tabName := this._ActiveTab
         if (tabName = "keyBind" || tabName = "quick") {
@@ -405,12 +419,12 @@ class HotkeyService {
             this.EnableGroup(Constants.StrongHoldHotkeys)
             this._EnableCustomGroup("strongHoldProtocol")
         }
-        this._EnableCustomGroup("all")  ; 全局类型任何标签下都注册
+        this._EnableCustomGroup("all")
         Logger.Info("Hotkey", "热键已重建，数量=" this.ActiveHotkeys.Count ", 标签页=" tabName
             ", 明细: " this._BuildDetailForActiveTab(tabName) ", 自定义: " this._BuildCustomDetailList())
     }
 
-    ; 内部：从存储文件读取自定义按键并构建注册信息（慢路径：含文件 IO 与功能校验，重建热键前调用）
+    ; 内部：读取自定义按键并构建注册信息（慢路径）
     static _BuildCustomProfiles() {
         CustomScriptEngine.Reload()
         this.CustomProfiles := Map()
@@ -430,8 +444,7 @@ class HotkeyService {
         }
     }
 
-    ; 内部：注册指定生效组的自定义按键（"all" | "combatQuick" | "strongHoldProtocol"；
-    ; group="all" 的条目任何调用都会注册）
+    ; 内部：注册指定生效组的自定义按键
     static _EnableCustomGroup(group) {
         HotIf(HotkeyContext)
         pattern := GameKeys.GetInterceptPattern()
@@ -443,9 +456,10 @@ class HotkeyService {
             }
         }
         HotIf
+        this._NotifyWatchKeysChanged()
     }
 
-    ; 构建自定义按键明细列表（用于日志）
+    ; 构建自定义按键明细列表（日志用）
     static _BuildCustomDetailList() {
         list := ""
         for id, info in this.CustomProfiles
@@ -455,7 +469,7 @@ class HotkeyService {
         return list
     }
 
-    ; 切换热键启用/禁用（只发布事实，托盘文案/图标由 UI 订阅更新）
+    ; 切换热键启用/禁用
     static SwitchHotkey(*) {
         if(this.HotkeyState == true) {
             this.HotkeyOff()
@@ -466,7 +480,6 @@ class HotkeyService {
         }
         if(this.HotkeyState == false) {
             this.HotkeyState := true
-            ; 根据内部保存的标签页启用对应热键组
             this.EnableByTab(this._ActiveTab)
             EventBus.Publish("HotkeyStateChanged", {enabled: true})
             Logger.Info("Hotkey", "用户启用热键")

@@ -1,40 +1,30 @@
 ; == 区服元数据与识别 ==
-; 纯数据 + 纯函数：负责从游戏安装目录 / 可执行文件推断区服，
-; 并给出对应 Unity PlayerPrefs 注册表根。
-; 不引用 core/ui，不产生副作用。
 
 class ServerProfile {
 
-    ; 所有区服客户端可执行文件名相同（事实基线）
     static ExeName := "Arknights.exe"
 
-    ; 内置区服元数据表（仅用于按 id 查找，不要用它推导枚举顺序）。
-    ; AHK v2 Map 的 for 枚举顺序是哈希序而非插入序（实测 BILI/CN/EN/JP/KR 乱序），
-    ; 因此所有需要顺序的遍历必须走 Order（CN 优先：CN 与 BILI 共享 company/product，
-    ; 兜底匹配时默认展示为官服）。
-    ; DirectoryHint 用于目录特征识别；ScanPaths 用于无进程时按特征扫描（相对安装父目录）。
+    ; 区服元数据表（按 id 查找用，枚举顺序见 Order）
     static Profiles := Map(
         "CN", {Id: "CN", DisplayNameKey: "国服", Company: "HyperGryph", Product: "Arknights", DirectoryHint: "Arknights Game", Locale: "zh-CN", ScanPaths: ["Arknights Game\Arknights.exe", "games\Arknights\Arknights.exe"]},
         "BILI", {Id: "BILI", DisplayNameKey: "哔哩哔哩服", Company: "HyperGryph", Product: "Arknights", DirectoryHint: "Arknights bilibili", Locale: "zh-CN", ScanPaths: ["Arknights bilibili\games\Arknights\Arknights.exe"]},
+        "TC", {Id: "TC", DisplayNameKey: "繁中服", Company: "Gryphline", Product: "Arknights_TC", DirectoryHint: "Arknights_TC", Locale: "zh-Hant"},
         "JP", {Id: "JP", DisplayNameKey: "日服", Company: "Yostar", Product: "Arknights_JP", DirectoryHint: "Arknights_JP", Locale: "ja-JP"},
         "KR", {Id: "KR", DisplayNameKey: "韩服", Company: "Yostar", Product: "Arknights_KR", DirectoryHint: "Arknights_KR", Locale: "ko-KR"},
         "EN", {Id: "EN", DisplayNameKey: "国际服", Company: "Yostar", Product: "Arknights_EN", DirectoryHint: "Arknights_EN", Locale: "en-US"}
     )
 
-    ; 区服优先级/枚举序（新增区服必须同步登记到此处与 Profiles）。
-    ; CN 优先于 BILI：两者共享 company/product 与注册表根，兜底时默认展示为官服；
-    ; BILI 安装目录必然含 "Arknights bilibili"，由目录特征先行命中，不冲突。
-    static Order := ["CN", "BILI", "JP", "KR", "EN"]
+    ; 区服优先级 / 枚举序（新增区服需同步登记）
+    static Order := ["CN", "BILI", "TC", "JP", "KR", "EN"]
 
-    ; 按 serverId 获取元数据；不存在返回 ""
+    ; 按 serverId 获取元数据
     static Get(serverId) {
         if this.Profiles.Has(serverId)
             return this.Profiles[serverId]
         return ""
     }
 
-    ; 已知区服 id 列表（显式顺序；不要用 for 迭代 Profiles Map 推导顺序——
-    ; AHK v2 Map 枚举顺序是哈希序而非插入序，见 Order 注释）
+    ; 已知区服 id 列表
     static Ids() {
         result := []
         for id in this.Order
@@ -42,26 +32,57 @@ class ServerProfile {
         return result
     }
 
-    ; 从可执行文件完整路径推断区服。
-    ; 返回对象：{serverId, company, product, registryRoot, source}
-    ; 识别顺序：
-    ;  1. 安装目录特征（权威）：CN 与 BILI 共享 company/product，app.info 完全相同，
-    ;     只有目录特征能区分渠道；其余区服的目录特征与 app.info 结果一致，先查不影响结论。
-    ;  2. app.info（兜底）：目录被移动/重命名后仍可识别；命中 CN 的 app.info 与 BILI 语义等价
-    ;     （共享注册表根与按键设置）。
-    ;  3. 注册表存在性：某服注册表根下存在 KEYBOARD_SETTING_V* 时优先。
+    ; 全部游戏路径配置项的有序列表
+    ; 返回 Array<{key, serverId, name}>
+    static AllGamePathEntries() {
+        entries := [{key: "GamePath", serverId: "", name: ""}]
+        for serverId in this.Ids() {
+            profile := this.Get(serverId)
+            entries.Push({
+                key: "GamePath" serverId,
+                serverId: serverId,
+                name: profile != "" ? I18n.T(profile.DisplayNameKey) : serverId
+            })
+        }
+        return entries
+    }
+
+    ; 从可执行文件完整路径推断区服
+    ; 返回 {serverId, company, product, registryRoot, source}
     static FromExePath(exePath) {
         if (exePath = "")
             return this._Unknown("", "")
 
         SplitPath(exePath, &fileName, &exeDir)
-        if (StrLower(fileName) != "arknights.exe")
-            exeDir := exePath  ; 调用方可能直接传入游戏目录
+        if (StrLower(fileName) != StrLower(this.ExeName)) {
+            ; 只接受名为 Arknights.exe 的文件（游戏目录请用 FromGameDir）
+            return this._Unknown("", "")
+        }
 
-        ; 1. 安装目录特征（BILI 与 CN 共用 app.info，目录特征先行；按 Order 显式顺序遍历）
+        ; XelLauncher 链接运行环境的渠道段
+        xelServerId := this._DetectXelLinkedRuntime(exeDir)
+        if (xelServerId != "") {
+            profile := this.Get(xelServerId)
+            return {
+                serverId: xelServerId,
+                company: profile.Company,
+                product: profile.Product,
+                registryRoot: "HKCU\Software\" profile.Company "\" profile.Product,
+                source: "xel_linked_runtime"
+            }
+        }
+
+        ; 安装目录特征
         for serverId in this.Order {
             profile := this.Get(serverId)
             if (profile.DirectoryHint != "" && InStr(exeDir, profile.DirectoryHint, false)) {
+                ; 渠道文件校正（仅目录特征判定为 CN 时）
+                if (serverId = "CN") {
+                    deployed := this._DetectDeployedChannel(exeDir)
+                    if (deployed != "")
+                        serverId := deployed
+                }
+                profile := this.Get(serverId)
                 return {
                     serverId: serverId,
                     company: profile.Company,
@@ -72,7 +93,7 @@ class ServerProfile {
             }
         }
 
-        ; 2. app.info 权威识别（目录被移动/重命名后的兜底；按 Order 显式顺序匹配）
+        ; app.info
         appInfo := this._ReadAppInfo(exeDir)
         if (appInfo.company != "" && appInfo.product != "") {
             for serverId in this.Order {
@@ -88,7 +109,7 @@ class ServerProfile {
                     }
                 }
             }
-            ; app.info 有值但不在内置表：按新服处理，直接用 company/product 拼注册表根
+            ; app.info 有值但不在内置表：按新服处理
             return {
                 serverId: "Unknown",
                 company: appInfo.company,
@@ -98,7 +119,7 @@ class ServerProfile {
             }
         }
 
-        ; 3. 注册表存在性：某服注册表根下有 KEYBOARD_SETTING_V* 时优先（同样按 Order；与 CN 同根时 CN 优先）
+        ; 注册表存在性
         for serverId in this.Order {
             if (this._RegistryHasKeyboardSetting(serverId)) {
                 profile := this.Get(serverId)
@@ -112,18 +133,56 @@ class ServerProfile {
             }
         }
 
-        ; 4. 完全无法识别
+        ; 无法识别
         return this._Unknown("", "")
     }
 
-    ; 从游戏目录（含 Arknights.exe 的目录）推断区服
+    ; 识别 XelLauncher 链接运行环境目录的渠道段（Official→CN / Bilibili→BILI）
+    static _DetectXelLinkedRuntime(exeDir) {
+        if (exeDir = "" || !InStr(exeDir, ".xel-linked-runtime", false))
+            return ""
+        parts := StrSplit(exeDir, "\")
+        for index, part in parts {
+            if (part != "" && InStr(part, ".xel-linked-runtime", false)) {
+                channelIndex := index + 3
+                if (channelIndex > parts.Length)
+                    return ""
+                channel := parts[channelIndex]
+                if (channel = "")
+                    return ""
+                if (StrLower(channel) = "official")
+                    return "CN"
+                if (StrLower(channel) = "bilibili")
+                    return "BILI"
+                return ""
+            }
+        }
+        return ""
+    }
+
+    ; 探测游戏目录实际部署的渠道（传统切服）
+    static _DetectDeployedChannel(exeDir) {
+        officialMark := exeDir "\hgsdk.dll"
+        biliMark := exeDir "\PCGameSDK.dll"
+        biliDir := exeDir "\BLPlatform64"
+        officialDeployed := FileExist(officialMark) != ""
+        biliDeployed := FileExist(biliMark) != "" && InStr(FileExist(biliDir), "D") > 0
+        if (officialDeployed && !biliDeployed)
+            return "CN"
+        if (biliDeployed && !officialDeployed)
+            return "BILI"
+        return ""
+    }
+
+    ; 从游戏目录推断区服
     static FromGameDir(gameDir) {
         if (gameDir = "")
             return this._Unknown("", "")
-        return this.FromExePath(gameDir "\Arknights.exe")
+        gameDir := RTrim(gameDir, "\")
+        return this.FromExePath(gameDir "\" this.ExeName)
     }
 
-    ; 根据 serverId 返回注册表根；Unknown 或未知 id 返回 ""
+    ; 按 serverId 返回注册表根
     static RegistryRoot(serverId) {
         profile := this.Get(serverId)
         if (profile = "")
@@ -138,9 +197,8 @@ class ServerProfile {
         return "HKCU\Software\" company "\" product
     }
 
-    ; 在不启动游戏的情况下，按已知目录特征扫描常见位置，返回 serverId → exePath。
-    ; 目录特征：CN=Arknights Game / games\Arknights（Hypergryph Launcher 布局），
-    ; BILI=Arknights bilibili（games\Arknights 子目录布局），JP/KR/EN=Arknights_JP|KR|EN。
+    ; 按已知目录特征扫描常见位置
+    ; 返回 serverId → exePath（Map）
     static FindInstalledPaths() {
         result := Map()
         for serverId in this.Ids() {
@@ -151,7 +209,7 @@ class ServerProfile {
         return result
     }
 
-    ; 在固定磁盘常见父目录中查找指定区服的可执行文件。
+    ; 在固定磁盘常见父目录中查找指定区服的 exe
     static _FindServerPath(serverId) {
         profile := this.Get(serverId)
         if (profile = "")
@@ -160,12 +218,10 @@ class ServerProfile {
         if (dirName = "")
             return ""
 
-        ; 如果用户已经配置过该区服路径且文件仍存在，优先保留用户选择
         configured := Config.GetImportant("GamePath" serverId)
         if (configured != "" && FileExist(configured))
             return configured
 
-        ; 兼容旧版单一 GamePath：若旧路径能推断为当前区服，也优先使用
         legacy := Config.GetImportant("GamePath")
         if (legacy != "" && FileExist(legacy)) {
             legacyInfo := this.FromExePath(legacy)
@@ -173,22 +229,18 @@ class ServerProfile {
                 return legacy
         }
 
-        ; 可执行文件相对安装父目录的候选路径。
-        ; 默认 "<DirectoryHint>\Arknights.exe"；BILI 渠道布局为
-        ; <Arknights bilibili>\games\Arknights\Arknights.exe，由 ScanPaths 覆盖。
         scanPaths := profile.HasOwnProp("ScanPaths") ? profile.ScanPaths : [dirName "\Arknights.exe"]
 
         for drive in this._FixedDriveLetters() {
             root := drive ":\"
-            ; 直接位于盘符根目录，例如 E:\Arknights Game\Arknights.exe
             for scanPath in scanPaths {
                 candidate := root scanPath
                 if FileExist(candidate)
                     return candidate
             }
 
-            ; 常见启动器/安装目录
-            for parent in ["YostarGames", "Hypergryph Launcher"] {
+            ; 常见启动器安装目录
+            for parent in ["YostarGames", "Hypergryph Launcher", "GRYPHLINK"] {
                 for scanPath in scanPaths {
                     candidate := root parent "\" scanPath
                     if FileExist(candidate)
@@ -202,7 +254,6 @@ class ServerProfile {
         return ""
     }
 
-    ; 获取固定磁盘盘符列表
     static _FixedDriveLetters() {
         result := []
         list := DriveGetList("FIXED")
@@ -211,12 +262,12 @@ class ServerProfile {
         return result
     }
 
-    ; 检查某个区服的注册表根是否存在（用于避免对未安装区服弹警告）
+    ; 某区服的注册表根是否存在
     static RegistryRootExists(serverId) {
         return this._RegistryKeyExists(this.RegistryRoot(serverId))
     }
 
-    ; 检查某服注册表根下是否存在 KEYBOARD_SETTING_V* 键值（推断用）
+    ; 某服注册表根下是否存在 KEYBOARD_SETTING_V* 键值
     static _RegistryHasKeyboardSetting(serverId) {
         root := this.RegistryRoot(serverId)
         if (root = "" || !this._RegistryKeyExists(root))
@@ -232,7 +283,7 @@ class ServerProfile {
         return false
     }
 
-    ; 通过 RegOpenKeyEx 判断注册表键是否存在，比 Loop Reg 更可靠
+    ; 通过 RegOpenKeyEx 判断注册表键是否存在
     static _RegistryKeyExists(root) {
         if (root = "")
             return false
@@ -251,7 +302,6 @@ class ServerProfile {
         else
             return false
 
-        ; 去掉 "HKCU" 等前缀，得到子键路径
         if RegExMatch(root, "i)^[A-Z]+\\", &m)
             subkey := SubStr(root, m.Len[0] + 1)
         if (subkey = "")
@@ -267,8 +317,7 @@ class ServerProfile {
         return false
     }
 
-    ; 读取 <exeDir>\Arknights_Data\app.info
-    ; 文件两行分别为 Unity companyName / productName；容忍 BOM 和空行。
+    ; 读取 <exeDir>\Arknights_Data\app.info（两行分别为 companyName / productName）
     static _ReadAppInfo(exeDir) {
         result := {company: "", product: ""}
         path := exeDir "\Arknights_Data\app.info"
@@ -287,7 +336,6 @@ class ServerProfile {
                 file.Close()
             }
         } catch Error as e {
-            ; 读取失败保持空，交给目录特征回退
             Logger.Warn("ServerProfile", "读取 app.info 失败：" e.Message)
         }
         return result
