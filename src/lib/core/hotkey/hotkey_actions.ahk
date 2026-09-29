@@ -147,13 +147,14 @@ class HoldGuard {
     static HoldLogIntervalMs := 3000       ; 按住周期活跃时的节流观测
     static LateUpWindowMs := 1000          ; 兜底收尾后，抑制迟到物理 up 的时间窗
     static PollHeartbeatMs := 5000         ; 轮询心跳观测间隔（诊断用）
+    static SwallowDetectDelayMs := 1000    ; 结束按住周期后仍认为按下多久即判定抬起被吞（诊断用）
 
     static _Holds := Map()                 ; pureKey -> {tick, name}
     static _Tails := Map()                 ; pureKey -> 按住周期结束时执行的收尾回调
     static _PhysDown := Map()              ; pureKey -> 定时器最近一次看到的物理态
     static _ClosedTick := Map()            ; pureKey -> 最近一次由兜底路径关闭按住周期的时刻
     static _LastLogTick := Map()
-    static _OnDown := Map()                ; pureKey -> 按住周期开始时执行的回调
+    static _ClosedCycle := Map()           ; pureKey -> 结束按住周期的 tick（抬起被吞自检用）
     static _IsGatedKey := Map()            ; pureKey -> false 表示该键不参与按住去重
     static _LastHeartbeatTick := 0
     static _PollTicks := 0
@@ -165,7 +166,7 @@ class HoldGuard {
         this._PhysDown.CaseSense := false
         this._ClosedTick.CaseSense := false
         this._LastLogTick.CaseSense := false
-        this._OnDown.CaseSense := false
+        this._ClosedCycle.CaseSense := false
         this._IsGatedKey.CaseSense := false
         if (this._Timer = "") {
             this._Timer := HoldGuard.Poll.Bind(HoldGuard)
@@ -181,7 +182,7 @@ class HoldGuard {
         this._PhysDown.Clear()
         this._ClosedTick.Clear()
         this._LastLogTick.Clear()
-        this._OnDown.Clear()
+        this._ClosedCycle.Clear()
         this._IsGatedKey.Clear()
     }
 
@@ -206,6 +207,8 @@ class HoldGuard {
             return true
         this._Holds[pureKey] := {tick: A_TickCount, name: actionName}
         this._LastLogTick[pureKey] := A_TickCount
+        if (this._ClosedCycle.Has(pureKey))
+            this._ClosedCycle.Delete(pureKey)
         return false
     }
 
@@ -243,6 +246,7 @@ class HoldGuard {
             if (held >= this.HoldLogIntervalMs)
                 Logger.Debug("HoldGuard", "按住周期结束：key=" pureKey "，按住 " held "ms")
         }
+        this._ClosedCycle[pureKey] := A_TickCount
         this._RunTail(pureKey)
         return held
     }
@@ -305,10 +309,33 @@ class HoldGuard {
     }
 
     ; 兜底轮询
+    static _VerifyReleased() {
+        for pureKey, closedTick in this._ClosedCycle.Clone() {
+            if !this.ShouldGate(pureKey) {
+                this._ClosedCycle.Delete(pureKey)
+                continue
+            }
+            if !this._Holds.Has(pureKey) && GetKeyState(pureKey, "P") = 0 {
+                this._ClosedCycle.Delete(pureKey)
+                continue
+            }
+            if (A_TickCount - closedTick >= this.SwallowDetectDelayMs) {
+                this._ClosedCycle.Delete(pureKey)
+                if this._Holds.Has(pureKey)
+                    continue
+                Logger.Warn("HoldGuard", "抬起被吞：key=" pureKey "（结束按住周期已 " (A_TickCount - closedTick)
+                    . "ms，系统仍认为该键处于按下）。该键的抬起事件未到达系统，属设备/驱动层丢事件；"
+                    . "在被吞状态清除前，系统与游戏都会认为该键一直被按住")
+            }
+        }
+    }
+
     static Poll() {
         this._PollTicks++
-        if (this._Holds.Count = 0)
+        if (this._Holds.Count = 0) {
+            this._VerifyReleased()
             return
+        }
         now := A_TickCount
         if (now - this._LastHeartbeatTick >= this.PollHeartbeatMs) {
             this._LastHeartbeatTick := now
@@ -346,6 +373,7 @@ class HoldGuard {
                     . "s（物理态仍为按下；正常长按，若用户已松手则是抬起事件丢失、等待跳变自愈）")
             }
         }
+        this._VerifyReleased()
     }
 }
 
