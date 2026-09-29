@@ -90,15 +90,21 @@ class KeyForward {
             throw
         }
     }
-    ; Up 变体热键统一回调：被拦截的键松开时一律补发 key up
+    ; Up 变体热键统一回调：结束按住周期，并给被拦截的键补发 key up
     static ActionUpForward(ThisHotkey) {
         pureKey := this.PureKeyName(ThisHotkey)
         HookHealth.NoteFire(pureKey)
         if (pureKey == "")
             return
-        ; 防递归：Send 补发的 up 会被钩子重新捕获触发本变体，补发期间同名键直接返回
+        HoldGuard.EndHoldMs(pureKey)
+        ; 防递归
         if KeyForward.SuppressUp.Has(pureKey)
             return
+        ; 迟到抬起
+        if HoldGuard.WasClosedByFallback(pureKey) {
+            Logger.Debug("KeyForward", "迟到抬起：key=" pureKey "（该按住周期已由兜底路径收尾，跳过补发）")
+            return
+        }
         if GameKeys.IsInjectedPressPending(pureKey) {
             Logger.Debug("KeyForward", "抑制透传 Up：key=" pureKey "（注入按下未完成，避免同帧补发吞掉注入按下）")
             return
@@ -136,45 +142,215 @@ class KeyForward {
     }
 }
 
+class HoldGuard {
+    static PollIntervalMs := 25            ; 兜底轮询间隔
+    static HoldLogIntervalMs := 3000       ; 按住周期活跃时的节流观测
+    static LateUpWindowMs := 1000          ; 兜底收尾后，抑制迟到物理 up 的时间窗
+    static PollHeartbeatMs := 5000         ; 轮询心跳观测间隔（诊断用）
+
+    static _Holds := Map()                 ; pureKey -> {tick, name}
+    static _Tails := Map()                 ; pureKey -> 按住周期结束时执行的收尾回调
+    static _PhysDown := Map()              ; pureKey -> 定时器最近一次看到的物理态
+    static _ClosedTick := Map()            ; pureKey -> 最近一次由兜底路径关闭按住周期的时刻
+    static _LastLogTick := Map()
+    static _OnDown := Map()                ; pureKey -> 按住周期开始时执行的回调
+    static _IsGatedKey := Map()            ; pureKey -> false 表示该键不参与按住去重
+    static _LastHeartbeatTick := 0
+    static _PollTicks := 0
+    static _Timer := ""
+
+    static Init() {
+        this._Holds.CaseSense := false
+        this._Tails.CaseSense := false
+        this._PhysDown.CaseSense := false
+        this._ClosedTick.CaseSense := false
+        this._LastLogTick.CaseSense := false
+        this._OnDown.CaseSense := false
+        this._IsGatedKey.CaseSense := false
+        if (this._Timer = "") {
+            this._Timer := HoldGuard.Poll.Bind(HoldGuard)
+            SetTimer this._Timer, this.PollIntervalMs
+            Logger.Info("HoldGuard", "兜底轮询已启动，间隔=" this.PollIntervalMs "ms（物理态校验 + 跳变自愈）")
+        }
+    }
+
+    ; 清空状态（热键重建/禁用时调用）
+    static Stop() {
+        this._Holds.Clear()
+        this._Tails.Clear()
+        this._PhysDown.Clear()
+        this._ClosedTick.Clear()
+        this._LastLogTick.Clear()
+        this._OnDown.Clear()
+        this._IsGatedKey.Clear()
+    }
+
+    ; 该键是否参与按住去重
+    static ShouldGate(pureKey) {
+        if (pureKey = "" || InStr(pureKey, "wheel"))
+            return false
+        return this._IsGatedKey.Get(pureKey, true)
+    }
+
+    ; _RegisterOne 登记不参与去重的键（Up 型热键等）
+    static MarkUngated(pureKey) {
+        if (pureKey != "")
+            this._IsGatedKey[pureKey] := false
+    }
+
+    ; 动作入口调用
+    static TryBegin(pureKey, actionName := "") {
+        if (pureKey = "")
+            return false
+        if (this._Holds.Has(pureKey))
+            return true
+        this._Holds[pureKey] := {tick: A_TickCount, name: actionName}
+        this._LastLogTick[pureKey] := A_TickCount
+        return false
+    }
+
+    ; 注册按住周期结束时的收尾回调
+    static RegisterTail(pureKey, fn) {
+        if (pureKey = "")
+            return
+        this._Tails[pureKey] := fn
+    }
+
+    ; 注册按住周期开始时执行的回调
+    static RegisterOnDown(pureKey, fn) {
+        if (pureKey = "")
+            return
+        this._OnDown[pureKey] := fn
+    }
+
+    ; 物理抬起
+    static EndHoldMs(pureKey, reason := "up") {
+        if (pureKey = "" || !this._Holds.Has(pureKey))
+            return 0
+        held := A_TickCount - this._Holds[pureKey].tick
+        this._Holds.Delete(pureKey)
+        if (this._LastLogTick.Has(pureKey))
+            this._LastLogTick.Delete(pureKey)
+        if (this._PhysDown.Has(pureKey))
+            this._PhysDown.Delete(pureKey)
+        if (reason = "fallback") {
+            this._ClosedTick[pureKey] := A_TickCount
+            Logger.Debug("HoldGuard", "兜底结束按住周期：key=" pureKey "，按住 " held "ms（物理态已抬起或跳变自愈；"
+                . "数百 ms 内的短按多为此前动作处于 Critical 段导致 Up 变体迟到，属预期）")
+        } else {
+            if (this._ClosedTick.Has(pureKey))
+                this._ClosedTick.Delete(pureKey)
+            if (held >= this.HoldLogIntervalMs)
+                Logger.Debug("HoldGuard", "按住周期结束：key=" pureKey "，按住 " held "ms")
+        }
+        this._RunTail(pureKey)
+        return held
+    }
+
+    ; 该键的按住周期是否刚由兜底路径结束
+    static WasClosedByFallback(pureKey) {
+        if (pureKey = "" || !this._ClosedTick.Has(pureKey))
+            return false
+        closed := this._ClosedTick[pureKey]
+        this._ClosedTick.Delete(pureKey)
+        return (A_TickCount - closed) <= this.LateUpWindowMs
+    }
+
+    static ActiveCount() {
+        return this._Holds.Count
+    }
+
+    ; 观测用
+    static Snapshot() {
+        if (this._Holds.Count = 0)
+            return "(无)"
+        now := A_TickCount
+        parts := ""
+        for pureKey, info in this._Holds {
+            physDown := this._PhysDown.Has(pureKey) && this._PhysDown[pureKey]
+            parts .= (parts = "" ? "" : " ") pureKey "+" (now - info.tick) "ms(phys=" (physDown ? "down" : "up") ")"
+        }
+        return parts
+    }
+
+    static _PhysDownSnapshot() {
+        parts := ""
+        for pureKey, _ in this._Holds
+            parts .= (parts = "" ? "" : " ") pureKey "=" (this._PhysDown.Has(pureKey) && this._PhysDown[pureKey] ? "down" : "up/unknown")
+        return (parts = "" ? "(无)" : parts)
+    }
+
+    static _RunOnDown(pureKey) {
+        if !this._OnDown.Has(pureKey)
+            return
+        fn := this._OnDown[pureKey]
+        this._OnDown.Delete(pureKey)
+        try {
+            fn()
+        } catch Error as e {
+            Logger.Exception("HoldGuard", e, "按住周期开始回调失败：key=" pureKey)
+        }
+    }
+
+    static _RunTail(pureKey) {
+        if !this._Tails.Has(pureKey)
+            return
+        fn := this._Tails[pureKey]
+        this._Tails.Delete(pureKey)
+        try {
+            fn()
+        } catch Error as e {
+            Logger.Exception("HoldGuard", e, "按住周期收尾回调失败：key=" pureKey)
+        }
+    }
+
+    ; 兜底轮询
+    static Poll() {
+        this._PollTicks++
+        if (this._Holds.Count = 0)
+            return
+        now := A_TickCount
+        if (now - this._LastHeartbeatTick >= this.PollHeartbeatMs) {
+            this._LastHeartbeatTick := now
+            Logger.Debug("HoldGuard", "轮询心跳：tick=" this._PollTicks "，活跃按住周期=" this._Holds.Count "，物理态=" this._PhysDownSnapshot())
+        }
+        for pureKey, info in this._Holds {
+            isDown := false
+            try {
+                isDown := GetKeyState(pureKey, "P") = 1
+            } catch Error {
+                isDown := true    ; 键名不可查询时保守按"仍按下"处理，交给跳变路径
+            }
+            if !this._PhysDown.Has(pureKey) {
+                this._PhysDown[pureKey] := isDown
+                if isDown
+                    this._RunOnDown(pureKey)
+                continue
+            }
+            prevDown := this._PhysDown[pureKey]
+            this._PhysDown[pureKey] := isDown
+
+            if !isDown {
+                this.EndHoldMs(pureKey, "fallback")
+                continue
+            }
+            if !prevDown {
+                Logger.Warn("HoldGuard", "按住周期自愈：key=" pureKey "，检测到抬起事件丢失后的新按下"
+                    . "（按住周期已持续 " (now - info.tick) "ms）")
+                this.EndHoldMs(pureKey, "fallback")
+                continue
+            }
+            if (now - this._LastLogTick.Get(pureKey, 0) >= this.HoldLogIntervalMs) {
+                this._LastLogTick[pureKey] := now
+                Logger.Debug("HoldGuard", "按住周期：key=" pureKey " 已按住 " Round((now - info.tick) / 1000, 1)
+                    . "s（物理态仍为按下；正常长按，若用户已松手则是抬起事件丢失、等待跳变自愈）")
+            }
+        }
+    }
+}
+
 ; == 功能实现 ==
 class HotkeyActions {
-    ; ---- 长按提示（PureKeyWait 用）----
-    ; 放在类级而非 PureKeyWait 的函数级 static：函数级 static 外部不可见，诊断脚本无法断言
-    static HoldWarnFirstMs := 30000      ; 首次长按提示的按住时长门槛
-    static HoldWarnIntervalMs := 60000   ; 之后每隔多久再提示一次
-    static HoldWarnMaxPerHold := 3       ; 每键每按住周期最多提示条数
-    static HoldWarnTotal := 0            ; 累计提示条数（观测用，不参与判定）
-    static HoldWarnCount := Map()        ; 每键本按住周期已提示次数
-    static HoldWarnTick := Map()         ; 每键上次提示时刻
-
-    static NoteHoldWarn(pureKey, heldMs) {
-        if (heldMs < this.HoldWarnFirstMs)
-            return false
-        if (this.HoldWarnCount.Get(pureKey, 0) >= this.HoldWarnMaxPerHold)
-            return false
-        lastTick := this.HoldWarnTick.Get(pureKey, 0)
-        if (lastTick != 0 && A_TickCount - lastTick < this.HoldWarnIntervalMs)
-            return false
-        this.HoldWarnTick[pureKey] := A_TickCount
-        this.HoldWarnCount[pureKey] := this.HoldWarnCount.Get(pureKey, 0) + 1
-        this.HoldWarnTotal += 1
-        return true
-    }
-
-    ; 按住周期结束：清掉该键的提示计数与节流时间戳
-    static ResetHoldWarn(pureKey) {
-        if (this.HoldWarnCount.Has(pureKey)) {
-            try this.HoldWarnCount.Delete(pureKey)
-            catch UnsetItemError {
-            }
-        }
-        if (this.HoldWarnTick.Has(pureKey)) {
-            try this.HoldWarnTick.Delete(pureKey)
-            catch UnsetItemError {
-            }
-        }
-    }
-
     ; -- 常规作战 --
     ; 按下暂停
     static ActionPressPause(ThisHotkey) {
@@ -194,7 +370,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 松开暂停
@@ -221,7 +396,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 前进档位1，原先为前进16ms，现可自定义
@@ -259,7 +433,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 暂停选中
@@ -293,7 +466,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 发送技能键
@@ -307,7 +479,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 发送撤退键
@@ -321,7 +492,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 一键技能
@@ -345,7 +515,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 一键撤退
@@ -370,7 +539,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 暂停技能
@@ -408,7 +576,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 暂停撤退
@@ -446,7 +613,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
 
@@ -479,7 +645,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 快捷切换开局暂停开关
@@ -490,7 +655,6 @@ class HotkeyActions {
         EventBus.Publish("SettingsValueChangeRequested", {key: "AutoBeginPause", value: newValue})
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
 
     ; 快捷切换开局自动二倍速开关
@@ -501,7 +665,6 @@ class HotkeyActions {
         EventBus.Publish("SettingsValueChangeRequested", {key: "AutoBeginSpeed", value: newValue})
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
 
     ; 模拟鼠标左键点击
@@ -513,14 +676,15 @@ class HotkeyActions {
             return
         }
         Logger.Debug("HotkeyActions", "ActionLButtonClick 执行，key=" KeyForward.PureKeyName(ThisHotkey))
-        Send "{LButton Down}"
         if InStr(ThisHotkey, "Wheel") {
+            Send "{LButton Down}"
             Send "{LButton Up}"
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
-        Send "{LButton Up}"
+        pureKey := KeyForward.PureKeyName(ThisHotkey)
+        HoldGuard.RegisterOnDown(pureKey, (*) => Send("{LButton Down}"))
+        HoldGuard.RegisterTail(pureKey, (*) => Send("{LButton Up}"))
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 放弃行动
@@ -531,7 +695,6 @@ class HotkeyActions {
         GameKeys.SendUp("battleLeftPopup")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 跳过招募动画/剧情
     static ActionSkip(ThisHotkey) {
@@ -556,7 +719,6 @@ class HotkeyActions {
         }
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 基建快速收取
     static ActionHarvest(ThisHotkey) {
@@ -595,7 +757,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; -- 卫戍协议 --
@@ -605,7 +766,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessViewEnemy")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 调度中心
     static ActionDispatchCenter(ThisHotkey) {
@@ -613,7 +773,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessShop")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 冻结
     static ActionFreeze(ThisHotkey) {
@@ -621,7 +780,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessFreeze")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 刷新
     static ActionRefresh(ThisHotkey) {
@@ -629,7 +787,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessRefresh")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 升级
     static ActionUpgrade(ThisHotkey) {
@@ -637,7 +794,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessLevelUp")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 卫戍协议撤退
     static ActionStrongHoldProtocolRetreat(ThisHotkey){
@@ -648,7 +804,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 出售/销毁
@@ -657,7 +812,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessSale")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 准备就绪
     static ActionReady(ThisHotkey) {
@@ -665,7 +819,6 @@ class HotkeyActions {
         GameKeys.Tap("autochessReady")
         if InStr(ThisHotkey, "Wheel")
             return
-        PureKeyWait(ThisHotkey)
     }
     ; 卫戍协议一键撤退
     static ActionStrongHoldProtocolOneClickRetreat(ThisHotkey) {
@@ -686,7 +839,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 一键出售/销毁
@@ -706,7 +858,6 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
     ; 一键购买
@@ -727,41 +878,11 @@ class HotkeyActions {
             try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
             return
         }
-        PureKeyWait(ThisHotkey)
         try DllCall("SetThreadDpiAwarenessContext", "ptr", oldCtx, "ptr")
     }
 }
 
 ; == 工具函数 ==
-; 去除修饰符前缀
-PureKeyWait(ThisHotkey, waitIntervalMs := 3000) {    ; waitIntervalMs：分段采样间隔，默认 3000ms
-    if (ThisHotkey == "")
-        return
-    pureKey := KeyForward.PureKeyName(ThisHotkey)
-    ; 分段等待
-    static LastLogTick := Map()
-    static LogIntervalMs := 500
-    idx := 0
-    intervalMs := Max(Integer(waitIntervalMs), 50)
-    while !KeyWait(pureKey, "T" intervalMs / 1000) {
-        idx++
-        ; DEBUG 采样：首条 + 之后每 10 个采样点一条（默认 3s 间隔下即 3s/30s）
-        if (idx = 1 || Mod(idx, 10) = 0) {
-            now := A_TickCount
-            if (now - LastLogTick.Get(pureKey, 0) >= LogIntervalMs) {
-                LastLogTick[pureKey] := now
-                Logger.Debug("KeyForward", "等待物理松开已 " Round(idx * intervalMs / 1000, 1) "s：key=" pureKey "（长按属正常操作；若钩子失效此处会永久挂起并占用线程）")
-            }
-        }
-        if HotkeyActions.NoteHoldWarn(pureKey, idx * intervalMs)
-            Logger.Warn("KeyForward", "等待物理松开已 " Round(idx * intervalMs / 1000, 1) "s（第 "
-                . HotkeyActions.HoldWarnCount.Get(pureKey, 0) " 次提示）：key=" pureKey
-                . "。若用户并未按着不放，说明键盘钩子可能已失效、KeyWait 永久挂起"
-                . "（动作线程会一直占着，堆满 #MaxThreads 后所有热键都启动不了）")
-    }
-    ; 本按住周期结束：清掉长按提示计数，下一次按住重新计
-    HotkeyActions.ResetHoldWarn(pureKey)
-}
 ; 关卡守卫：在关卡内返回 true；拦截时透传原键并记录日志，返回 false
 GuardInLevel(actionName, ThisHotkey) {
     pureKey := KeyForward.PureKeyName(ThisHotkey)
@@ -872,6 +993,7 @@ HotkeyActionsStart() {
     KeyForward._LastForwardTick.CaseSense := false
     KeyForward._LastForwardDownTick.CaseSense := false
     GameKeys.InjectedPressKeys.CaseSense := false
+    HoldGuard.Init()
     TouchInjector.Init(3, 1)
     prevMouseCoordMode := CoordMode("Mouse", "Screen")
     try {

@@ -85,8 +85,6 @@ class CustomScriptEngine {
         if entry.type = "combat" && !GuardInLevel("CustomScript:" id, ThisHotkey)
             return
         this.Execute(entry.steps)
-        if !InStr(ThisHotkey, "Wheel")
-            PureKeyWait(ThisHotkey)
     }
 
     ; 执行预编译步骤；finally 无条件还原光标
