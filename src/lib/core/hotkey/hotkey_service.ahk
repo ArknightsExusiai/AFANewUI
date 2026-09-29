@@ -372,28 +372,12 @@ class HotkeyService {
         this._NotifyWatchKeysChanged()
     }
 
-    ; 禁用指定组的热键
+    ; 禁用指定组的热键：直接按 ActiveHotkeys（注册表本身）注销，避免注销条件与注册条件不对称
     static DisableGroup(groupMap) {
         HotIf(HotkeyContext)
-        pattern := GameKeys.GetInterceptPattern()
-        for keyVar, _ in groupMap {
-            hotkeyValue := Config.ReadHotkeyFromIni(keyVar)
-            if (hotkeyValue != "") {
-                try Hotkey(hotkeyValue, , "Off")
-                try Hotkey("~" hotkeyValue, , "Off")
-                ; 仅注销实际注册过的 Up 变体
-                if (this.ActionCallbacks.Has(keyVar)) {
-                    profile := this.ActionCallbacks[keyVar]
-                    if ((profile.HasOwnProp("OnUp") || profile.HasOwnProp("Guarded")) && !InStr(hotkeyValue, "Wheel") && hotkeyValue ~= pattern) {
-                        try Hotkey(hotkeyValue " Up", , "Off")
-                        this.ActiveHotkeys.Delete(hotkeyValue " Up")
-                    }
-                }
-                this.ActiveHotkeys.Delete(hotkeyValue)
-                this.ActiveHotkeys.Delete("~" hotkeyValue)
-                this.ActiveHotkeys.Delete("~" hotkeyValue " Up")
-            }
-        }
+        for reg, _ in this.ActiveHotkeys
+            try Hotkey(reg, , "Off")
+        this.ActiveHotkeys := Map()
         HotIf
         this._NotifyWatchKeysChanged()
     }

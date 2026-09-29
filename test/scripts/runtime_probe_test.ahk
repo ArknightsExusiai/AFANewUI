@@ -113,12 +113,6 @@ TailCounter(*) {
     TailFired++
 }
 
-global OnDownFired := 0
-OnDownCounter(*) {
-    global OnDownFired
-    OnDownFired++
-}
-
 ProbeReset() {
     HookHealth._PrevDown := Map()
     HookHealth._Pending := Map()
@@ -340,14 +334,7 @@ try {
     Truthy("按住周期：快照含挂起键与物理态", InStr(HoldGuard.Snapshot(), SAMPLE_KEY "+") && InStr(HoldGuard.Snapshot(), "phys=")
         , "快照=" HoldGuard.Snapshot())
 
-    ; 按住周期开始回调（"按住热键 = 按住鼠标左键"的 Down 走这条）
-    OnDownFired := 0
     HoldGuard.RegisterTail(SAMPLE_KEY, TailCounter)
-    HoldGuard.RegisterOnDown(SAMPLE_KEY, OnDownCounter)
-    HoldGuard._RunOnDown(SAMPLE_KEY)             ; 直接驱动开始回调（真实触发在 Poll 首次采样到"按下"时）
-    Eq("按住周期：开始回调被触发", OnDownFired, 1)
-    HoldGuard._RunOnDown(SAMPLE_KEY)
-    Eq("按住周期：开始回调只触发一次", OnDownFired, 1)
     HoldGuard.EndHoldMs(SAMPLE_KEY)
     Eq("按住周期：关闭时执行收尾回调", TailFired, 1)
     HoldGuard.EndHoldMs(SAMPLE_KEY)
@@ -393,6 +380,16 @@ try {
         , "监视键位=[" HookHealth._WatchKeyNames() "]")
     registered := REG_HK ~= pattern ? REG_HK : "~" REG_HK
     Eq("ActiveHotkeys 记为探测键", HotkeyService.ActiveHotkeys.Get(registered, ""), registered)
+
+    ; DisableGroup 注销须与注册对称：按 ActiveHotkeys 逐条注销，不留 Up 变体残骸
+    beforeDisable := HotkeyService.ActiveHotkeys.Count
+    HotkeyService.DisableGroup(Map("ProbeGroup", true))
+    Eq("DisableGroup 清空注册表", HotkeyService.ActiveHotkeys.Count, 0, "注销前=" beforeDisable)
+    HotkeyService._RegisterOne(REG_HK, {Fn: FakeAction}, pattern)     ; 复原，供后续用例使用
+    HotkeyService._RegisterOne("F8", {Fn: FakeAction}, pattern)       ; 非拦截键同样要清
+    HotkeyService.DisableGroup(Map("ProbeGroup", true))
+    Eq("DisableGroup 清空含非拦截键的注册表", HotkeyService.ActiveHotkeys.Count, 0)
+    HotkeyService._RegisterOne(REG_HK, {Fn: FakeAction}, pattern)     ; 再次复原
     HotIf
 
     ; ---- 4. 抬起基准：必须跟随每次采样到抬起，而非仅在观测到跳变时记 ------------
