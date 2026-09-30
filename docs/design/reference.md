@@ -84,5 +84,3 @@
 | `tools/event_contract_check.py` | `python -X utf8 tools/event_contract_check.py` | 涉及 `EventBus.Publish/Subscribe` 的改动（已接入 CI） |
 | `tools/i18n_check.py` | `python -X utf8 tools/i18n_check.py` | 涉及文案或语言资源的改动 |
 | `test/scripts/smoke_test.ahk` | `AutoHotkey64.exe /ErrorStdOut "test/scripts/smoke_test.ahk"`（取错方式见 AGENTS.md「用 AHK 脚本做测试时的错误捕获」） | 涉及模块结构/include 的改动（include 全模块后验证无顶层副作用） |
-| `test/scripts/theme_test.ahk` | 同 smoke_test 的运行方式，仅换脚本路径 | 涉及主题逻辑的改动（`Theme.Resolve`/`Normalize` 与 `Constants.NormalizeThemeMode` 一致性断言） |
-| `test/scripts/runtime_probe_test.ahk` | 同 smoke_test 的运行方式，仅换脚本路径（成功输出 `PASS: runtime probe checks`） | 涉及 `HookHealth` 探针或热键回调链路的改动。**AHK 的函数/方法名只在调用时解析**：未定义函数、缺失方法、被短路绕过的检查都能通过 `/Validate` 与 smoke_test——本项目已两次中招（方法群被删导致启动即报 `no method named "Start"`；结算路径调用未定义的 `IsMouseKey`，因测试旁路参数短路而只在生产炸）。本脚本以真实调用 + 探针自证不变式守住这一类 |

@@ -126,7 +126,6 @@ issue 原文只记到「`USleep` 超时 382ms」，2026-09-29 的复现补全了
 
 | 可自动化 | 只能手工 |
 |---|---|
-| 按住去重状态机的全部状态迁移（`test/scripts/runtime_probe_test.ahk` 直接调 `TryBegin`/`EndHoldMs`/`Poll`，含未知物理态只登记、兜底关闭可抑制迟到抬起、收尾回调只执行一次） | **物理长按**本身：AHK/Windows 在更新物理键态与热键判定时忽略注入事件，`Send` / `keybd_event` / `mouse_event` 都构造不出「物理按住」，故 `KeyWait` 对注入键立即返回 |
 | 静态门禁（layer/event/i18n）与 `/Validate` 加载期检查 | 「按住 A 再按 B，B 松开前 A 是否失效」（issue #286）、「抬起事件丢失后的自愈」、「按住热键 = 按住鼠标左键」的松开手感 |
 
 手工项见 `test/finished_test_pure_key_hold_guard.md`（2026-09-29 全部通过；未覆盖项与过程中发现并修复的问题见该文件末尾）。
