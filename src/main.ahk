@@ -51,10 +51,10 @@
 #Include ./lib/core/updater/downloader.ahk
 #Include ./lib/core/updater/self_replacer.ahk
 #Include ./lib/core/updater/updater_manager.ahk
+#Include ./lib/core/updater/changelog_checker.ahk
 #Include ./lib/ui/updater_ui.ahk
 #Include ./lib/core/launch/game_launcher.ahk
 #Include ./lib/ui/changelog_ui.ahk
-#Include ./lib/core/changelog/changelog_checker.ahk
 #Include ./lib/ui/status_bar.ahk
 #Include ./lib/ui/gui.ahk
 #Include ./lib/ui/custom_key_editor.ahk
