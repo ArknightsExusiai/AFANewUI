@@ -93,7 +93,6 @@ class KeyForward {
     ; Up 变体热键统一回调：结束按住周期，并给被拦截的键补发 key up
     static ActionUpForward(ThisHotkey) {
         pureKey := this.PureKeyName(ThisHotkey)
-        HookHealth.NoteFire(pureKey)
         if (pureKey == "")
             return
         HoldGuard.EndHoldMs(pureKey)

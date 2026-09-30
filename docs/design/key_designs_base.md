@@ -20,7 +20,7 @@
 
 **DEBUG 恒持久化**（v2.0.3+）：`Logger.Debug` 无条件写盘（不受任何开关控制），用户不开调试模式也能拿到完整运行轨迹；`DebugEnabled`（Important）仅控制实时调试控制台显示。
 
-透传日志按键按下→松开配对合并为一条；高频源（HookHealth 心跳 60s/条、LevelDetector 每 20 次轮询、滚轮 100ms）均已有节流。所有日志通过 `OutputDebug` 同步输出到 DebugView。容量清理依赖缓存指标（`CachedOrdinaryFiles`/`CachedOrdinaryBytes` 等），每 64 次写入或有容量压力时触发。
+透传日志按键按下→松开配对合并为一条；高频源（LevelDetector 每 20 次轮询、滚轮 100ms）均已有节流。所有日志通过 `OutputDebug` 同步输出到 DebugView。容量清理依赖缓存指标（`CachedOrdinaryFiles`/`CachedOrdinaryBytes` 等），每 64 次写入或有容量压力时触发。
 
 ## 实时调试控制台（logger.ahk）
 
@@ -106,20 +106,6 @@ INI 格式，三个 Section：`[Hotkeys]`、`[Main]`、`[Custom]`。`GitHubToken
 ## 数据文件
 
 `%AppData%\ArknightsFrameAssistant\PC\changelog.json` 存储从 GitHub Releases API 拉取的所有版本发布内容，每次版本检查时更新。由 `ReleaseRepository._SaveChangelogCache()` 写入，`ChangelogChecker` 读取。
-
-## 键盘钩子健康探针
-
-（`core/diagnostics/hook_health.ahk`，背景 #340）
-
-AFA 全部热键注册在 `HotIf` 回调下，每次按键都要主线程求值，求值期间钩子回调阻塞。主线程若超过系统低级钩子超时（`LowLevelHooksTimeout`，未配置时默认 300ms）无法响应，系统累计 11 次后即静默摘除键盘钩子，表现为「所有快捷键突然失效，必须重启或重新注册热键才恢复」，且 AHK 自身无从感知。
-
-观测手法：用**不依赖钩子**的 `GetAsyncKeyState` 采样已注册热键键位的物理按下沿，与**依赖钩子**的热键回调计数（`NoteFire`）对照。观测到物理按下却在宽限期内没有任何热键回调 ⇒ 记一次未命中；连续多次 ⇒ 判定钩子失效，落一份完整状态快照并按需自愈。
-
-判读要点：快照里的 idle/idleKbd/idlePhys 三值恒等，说明 `A_TimeIdleKeyboard` 与 `A_TimeIdlePhysical` 已退化为 `A_TimeIdle`（文档：钩子未安装时二者等价于 `A_TimeIdle`），即钩子确已不再被调用；三值有差异则说明钩子仍在正常区分键盘与鼠标输入。**注意单看 idleKbd 数值大小无法判定**——纯键盘输入时两种情况都接近 0，必须看三值是否恒等。
-
-快照另外带 `ctxEval`（单次 HotIf 求值耗时，用 QueryPerformanceCounter 采样、频率缓存见 `base/timing.ahk` 的 `Qpc()`）与累计自愈次数 `recover`。**这是快照里唯一的耗时项**：曾有的 `inToAction`（首次求值→动作线程开始）因在生产上无法自证正确、连报假延迟而整项移除——测不准的指标不留。**判读顺序与「Windows 卡住 / 游戏正常」的完整排查路径见 [input_stall_diagnosis.md](input_stall_diagnosis.md)**，不要只凭快照里单个数字下结论。
-
-自愈用 `InstallKeybdHook(true, true)`，文档明确该 Force 重装会"抢占其它进程先前安装钩子的优先级"——因此它对"钩子被摘除"有效，对"输入被前置钩子吞掉"却是反向操作，故阈值与冷却都取保守值（见 `input_stall_diagnosis.md` 第 6 节）。**探针自身的误报挡板**（建档前提、竞态窗口、结算口径、前提失效作废、自证计数）见同一文件第 7 节。
 
 ## 随游戏自动启动（game_auto_start.ahk）
 

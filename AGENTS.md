@@ -29,8 +29,8 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 > 3. 事件命名统一 `XxxRequested`（命令）/ `XxxChanged`/`Started`/`Completed`（事实）；事件契约由 `tools/event_contract_check.py` 静态校验。
 > 4. 配置写入只经 `SettingsService`；热键元数据只来自 `base/hotkey_schema.ahk`；`State` 类已删除，字段归唯一 owner。
 
-**启动流程**（`main.ahk` 的 `App.Bootstrap()`）：环境初始化 → 单例识别 → 非管理员 `*RunAs` 提权重启 → `Logger.Init()` → 各域 `Init()` → `SettingsService.Initialize()` 加载配置 → 随游戏自启校准 → 资源提取 → `GameKeys.Init()` → `HotkeyService.HotkeyOn()` → `HookHealth.Start()` → GUI 初始化 → 发布 `AppStartCompleted` → `GameMonitor.Start()` → Legacy 事件收尾。
-**三条顺序依赖**：`GameKeys.Init()` 必须在 `HotkeyOn()` **之前**；`HookHealth.Start()` 必须在 `HotkeyOn()` **之后**；`SingleInstance.Release()` 必须先于 `*RunAs` 重启。完整流程（按 `StartupMark` 语义标记定位，不写行号）见 [module_responsibilities.md](docs/design/module_responsibilities.md#启动流程当前实现)。
+**启动流程**（`main.ahk` 的 `App.Bootstrap()`）：环境初始化 → 单例识别 → 非管理员 `*RunAs` 提权重启 → `Logger.Init()` → 各域 `Init()` → `SettingsService.Initialize()` 加载配置 → 随游戏自启校准 → 资源提取 → `GameKeys.Init()` → `HotkeyService.HotkeyOn()` → GUI 初始化 → 发布 `AppStartCompleted` → `GameMonitor.Start()` → Legacy 事件收尾。
+**两条顺序依赖**：`GameKeys.Init()` 必须在 `HotkeyOn()` **之前**；`SingleInstance.Release()` 必须先于 `*RunAs` 重启。完整流程（按 `StartupMark` 语义标记定位，不写行号）见 [module_responsibilities.md](docs/design/module_responsibilities.md#启动流程当前实现)。
 
 **模块职责**（56 个 `.ahk` 的完整表）见 [module_responsibilities.md](docs/design/module_responsibilities.md#模块职责)。改某个模块前先查它，勿凭猜测扩写。
 

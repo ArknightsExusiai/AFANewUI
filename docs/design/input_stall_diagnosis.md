@@ -1,6 +1,6 @@
 # 「Windows 卡住 / 游戏正常」输入链排查路径
 
-> AGENTS.md 参考资料分册。本文件是**判读顺序**，不是新机制：机制细节见 [key_designs_base.md#键盘钩子健康探针](key_designs_base.md#键盘钩子健康探针) 与 [key_designs_hotkey.md](key_designs_hotkey.md)。
+> AGENTS.md 参考资料分册。本文件是**判读顺序**，不是新机制：机制细节见 [key_designs_hotkey.md](key_designs_hotkey.md)。
 > 记录目的：这条现象每次都被重新怀疑一遍 AFA 主线程，而"主线程停顿会不会冻结全局输入"这个假说早已有结论（见[第 5 节](#5-已证伪的假说不要重复验证)）。
 
 ## 1. 现象与它已经排除掉的东西
@@ -61,21 +61,15 @@ reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Windows" /v LowLevelHo
 
 ### 第 5 步：最后才怀疑 AFA 自身
 
-AFA 提供的证据链（都在日志里，配合 `HookHealth` 快照读）：
+AFA 提供的证据链（都在日志里）。
 
 | 观察点 | 含义 |
 |---|---|
-| `[WARN] [HookHealth] 物理按下未触发热键` | 探针用**不依赖钩子**的 `GetAsyncKeyState` 采到物理按下，但宽限期内没有任何热键回调 |
-| 快照 `idle=…, idleKbd=…, idlePhys=…` **三值恒等** | 钩子确已不再被系统调用（`A_TimeIdleKeyboard`/`A_TimeIdlePhysical` 退化为 `A_TimeIdle`）；三值有差异说明钩子仍在正常区分键盘与鼠标输入 |
-| 快照 `ctxEval=max/avg/n` | 单次 `HotIf` 求值耗时（**本快照里唯一的耗时项，也是唯一可验证的一项**）——求值就在钩子判定路径上，这个数大＝主线程在判定路径上停顿 |
-| 快照 `recover=` | 累计自愈次数。反复增长说明冲突在持续，**不要**靠继续重装钩子解决 |
-| `[WARN] [HookHealth] 物理按下未触发热键` 与"切换窗口"同时出现 | 属**假阳性**，已在结算时复核判定前提修掉（见下） |
-| `[WARN] [HookHealth] 钩子自愈：…抢占优先级` | 每次强制重装都会改变钩子链优先级顺序，见第 6 节 |
 | `[INFO] [HotkeyActions] <动作> 阶段N/M …` | 动作执行到哪一步。卡死时最后一条阶段日志即断点（阶段日志覆盖全部多阶段动作，500ms 节流） |
 | `[WARN] [HoldGuard] 物理态已抬起但按住周期未结束` | 结构性异常：兜底路径发现按键物理态已复位、按住周期却未结束（正常路径该由 `X Up` 变体结束）。对照快照 `hold=` 看是哪个键 |
 | 快照 `hold=[key+Ns(phys=down/up) …]` | 此刻哪些键处于按住周期、已持续多久、物理态如何。按住周期常驻属预期（见 [hold_guard.md](hold_guard.md#22-为什么不做硬上限)），**不再等于线程泄漏** |
 
-判读顺序：先看**有没有东西没释放**（`hold` 按住周期视图 + `depth`/`inflight`），再看**钩子是否还被调用**（三值恒等 + miss），最后看**AFA 内部耗时**（ctxEval），三者不要混着读。
+判读顺序：先看**有没有东西没释放**（`hold` 按住周期视图），再看**AFA 内部耗时**，两者不要混着读。
 
 **"这次按下是否已被回调消费"的判据，必须以「上次观测到抬起」为基准**：
 
@@ -88,18 +82,14 @@ AFA 提供的证据链（都在日志里，配合 `HookHealth` 快照读）：
 
 | 前提 | 失效场景 | 处理 |
 |---|---|---|
-| 该键仍是当前注册的热键 | 用快捷键禁用热键 / 切标签页重建分组 | **即时刷新**监视表（`HotkeyService._NotifyWatchKeysChanged()` 调 `HookHealth.RefreshWatchKeysNow()`），并在结算时复核 `_IsWatchedKey()`（记为 `watchDrop`） |
 | 前台仍是建档时那个窗口 | 按下后切走窗口（热键按设计不再触发） | 结算时比对建档留档的 `fgHwnd`，变了就作废（记为 `discard`） |
 | 鼠标键的光标仍在游戏客户区 | 按下后把光标移出游戏窗口 | 结算时复核 `IsMouseInClient()`，不成立就作废（记为 `discard`） |
 
-> 为什么"禁用热键"必须即时通知探针：定时刷新间隔是 5s，而 `HotkeyOff()`/`EnableByTab()` 会**立刻**清空 `ActiveHotkeys`。这个空窗里探针仍盯着已注销的键，按下它 → 建档但永远没有回调（**本就不该有**）→ 宽限期后误报"物理按下未触发热键"。**复现**：按一次某键并松开 → 3 秒内禁用热键 → 5 秒内再按同一键。
-
 **关于耗时指标的一条重要边界**：
 
-- **只有 `ctxEval` 保留**。它是脚本自己函数的求值耗时，用 QPC 前后夹逼，单元测试可直接断言；而且它与"钩子被系统摘除"直接相关（求值超时会被系统记一次超时）。阈值 50ms，超标落 WARN。
-- **曾经还有一项 `inToAction`（首次求值 → 动作线程开始），已整项移除**。它在生产上连报过多次"输入交付 3.9s"假延迟，根因是区间起点会被 key repeat 重复登记、以及清理动作一度被"游戏前台"门挡住；而**脚本侧无法独立验证该区间的真实性**——同一份数据里既有真排队也有残留，读的人无法分辨。判断标准是：测不准的指标一律不留，避免污染判读。
-- **"输入在到达本进程之前被拖了多久"脚本侧根本无法打点**：AHK 不向脚本暴露低级钩子过程入口。这一段只能靠 `miss` 计数与 `idle` 三值间接判断（钩子是否还被系统调用）。
-- 因此判读顺序是：**先看 miss + idle 三值（钩子还活着吗）→ 再看 ctxEval（判定路径被拖了吗）→ 两者都正常却"按键没反应"，问题多半在 AFA 之外**（回到第 2、3 步查前置钩子）。
+- **测不准的指标一律不留**——它在生产上连报过多次"输入交付 3.9s"假延迟，根因是区间起点被 key repeat 重复登记、清理动作一度被"游戏前台"门挡住，而脚本侧无法独立验证该区间的真实性，同一份数据里真排队与残留无法分辨。
+- **"输入在到达本进程之前被拖了多久"脚本侧根本无法打点**：AHK 不向脚本暴露低级钩子过程入口。
+- 因此当前判读顺序是：**AFA 侧 `HoldGuard` 与 `HotkeyActions`/`KeyForward` 的日志可看；这些正常却"按键没反应"，问题多半在 AFA 之外**。
 
 ## 3. 为什么不给动作注入序列加阶段日志（已否决，勿重走）
 
@@ -116,7 +106,7 @@ AFA 提供的证据链（都在日志里，配合 `HookHealth` 快照读）：
 
 **结论与替代做法**：
 
-- 动作内部**只在入口/出口各留一条**原有 DEBUG，不逐阶段打点；需要定位卡死位置时靠**时序**（最后一条日志的时刻 + `HookHealth` 快照的 `depth`/`inflight`）而不是靠阶段序号。
+- 动作内部**只在入口/出口各留一条**原有 DEBUG，不逐阶段打点；需要定位卡死位置时靠**时序**（最后一条日志的时刻 + `HoldGuard` 的按住周期 DEBUG 与 `HoldGuard.Snapshot()`）而不是靠阶段序号。
 - 真正危险的"卡在等待"已由 `HoldGuard` 覆盖：按住周期活跃时每 3s 一条节流 DEBUG，WARN 收窄为"物理态已抬起但按住周期未结束"；它只在**按住周期活跃期间**打点，不插在 Send 序列里。旧 `PureKeyWait` 的阻塞等待已整体移除，见 [hold_guard.md](hold_guard.md)。
 - 若将来确实需要更细的时序观测：用内存计数 + 事后一次性导出（快照/诊断包），**不要**在按键序列中间做 I/O。
 
@@ -124,14 +114,14 @@ AFA 提供的证据链（都在日志里，配合 `HookHealth` 快照读）：
 
 只要出现"输入卡住"就必须导出，越接近故障时刻越有价值：
 
-- 诊断包里的日志是**逐条时间戳**的，故障时间窗内的 `HookHealth` WARN、`HotkeyActions` 阶段日志、`KeyForward` 等待物理松开日志会连成一条链；
+- 诊断包里的日志是**逐条时间戳**的，故障时间窗内的 `HotkeyActions` 阶段日志、`HoldGuard` 按住周期日志、`KeyForward` 等待物理松开日志会连成一条链；
 - 诊断包同时带上了第 2 步的环境事实（外设/宏进程），省掉"事后靠记忆回忆当时装了什么"。
 
 导出口径与脱敏规则见 `core/diagnostics/log_exporter.ahk` 与 [key_designs_base.md](key_designs_base.md)。
 
 ## 4. 为什么"日志里什么都没有"其实也是证据
 
-如果一次卡顿之后，日志里既没有 `HookHealth` 的 miss/心跳异常，也没有 `HotkeyActions` 阶段日志、没有 `inToAction` 峰值，那说明：**在你按的那些键上，AFA 从头到尾没被调用过。**
+如果一次卡顿之后，日志里既没有 `HotkeyActions` 阶段日志、也没有 `HoldGuard` 按住周期日志，那说明：**在你按的那些键上，AFA 从头到尾没被调用过。**
 
 结合第 1 节，这正是"输入在到达 AFA 之前就被拦住/拖住"的形态——此时故障发生在第 2、3 步的范围内，而系统钩子超时是**累计式**的（可能已经发生过 10 次超时但还没到摘除阈值），所以 AFA 侧看不到任何异常也不矛盾。
 
@@ -147,33 +137,3 @@ AFA 提供的证据链（都在日志里，配合 `HookHealth` 快照读）：
 因此这条现象**不该**再被当作"验证 AFA 主线程停顿"的入口：真正会冻结整机输入的是**链上其它进程的低级钩子不返回**（系统必须等钩子返回才继续分发），以及驱动层问题——都不在 AFA 进程内，当然也不会触发 AFA 的任何自愈。
 
 > 需要注意的另一个方向（**属于 AFA，但表现不同**）：AFA 的键盘钩子被系统摘除后，依赖**物理键态**的判定会失真。旧实现在这里会永久挂起（动作线程堆满 `#MaxThreads`(默认 10) 后所有热键都无法启动）；**新模型（`HoldGuard`）已把这条路径消灭**——按住周期不再占线程，摘下钩子最多让某个键的按住周期多挂一会儿，且兜底定时器会用 `GetKeyState` 物理态与 down→up→down 跳变自愈。判读见 [hold_guard.md](hold_guard.md#5-观测与判读)。这条与"整机输入冻结"仍是两回事，不要混为一谈。
-
-## 6. 自愈的代价：为什么阈值抬高、冷却拉长
-
-`HookHealth._OnSuspected()` 用 `InstallKeybdHook(true, true)` 自愈。官方文档（`docs/ahk_docs/lib/InstallKeybdHook.htm`）对该参数的原话是：
-
-> If true and Install is true, the hook is uninstalled and reinstalled. This has the effect of **giving it precedence over any hooks previously installed by other processes**. If the system has stopped calling the hook due to an unresponsive program, reinstalling the hook might get it working again.
-
-也就是说自愈是**带副作用的**：它对"钩子被系统摘除"有效，但对"输入被前置钩子吞掉"这类冲突，等于**主动去抢别人的钩子优先级**——冲突可能因此更乱（对方软件也可能据此重新注册，形成来回抢占）。
-
-故当前策略：
-
-- 连续未命中阈值 `MissThreshold` = 5（原 3）；
-- 自愈冷却 `RecoverCooldownMs` = 30000ms（原 5000ms）；
-- 每次自愈落一条 WARN，明确写出"已强制重装并抢占优先级"，并带累计次数；
-- 快照输出 `recover=` 累计自愈次数。
-
-**判读**：`recover` 持续增长 ⇒ 停止把自愈当作解决办法，转而排查第 2、3 步的前置钩子；把 AFA 的钩子链优先级被谁抢、以及每次自愈的时间点与用户操作时间线对照。
-
-## 7. 探针自身的判读口径（误报是怎么被挡掉的）
-
-钩子探针用**不依赖钩子**的 `GetAsyncKeyState` 采样热键键位的物理按下沿，与**依赖钩子**的 `NoteFire` 回调计数对照；观测到物理按下却在宽限期内没有同键回调，才记一次未命中。以下口径缺一个都会造成误报，改探针时不要绕过：
-
-- **`PendingGraceMs`(3000ms) 必须覆盖完整触发路径**：失焦悬停的激活等待（`ActivateTimeoutMs` 200ms）+ 最长一组过帧 + 采样余量。定得太短，正常但"慢"的动作会被判成未触发。
-- **建档前提（`_ShouldArm`）**：游戏须为前台（`GameTarget.IsForegroundCached()`）、该键不是 AFA 自己注入的按下（`GameKeys.IsInjectedPressPending`）、也没有正在补发的 up（`KeyForward.SuppressUp`）——这三类按下本来就不该触发热键。
-- **竞态窗口 `FireRaceWindowMs`(250ms)**：探针采样可能晚于钩子回调；该键刚回调过且此后未见过抬起 ⇒ 判定为已命中，不建档。
-- **结算必须按计数差，不能用 `Has`**：`fire` 存的是按下瞬间的回调计数快照，`_FireByKey.Get(key,0) > info.fire` 才算"宽限期内有回调"——用"表里有没有这个键"判定会因为历史触发过而永远为真。
-- **前提失效即作废该次观测**（记 `discard`）：前台窗口已切换；鼠标键要求光标仍在游戏客户区内。按键被注销（热键禁用/分组切换）记 `watchDrop`——这些情形下"没有回调"是正确的。
-- **同键重入被 `MaxThreadsPerHotkey` 正常屏蔽**：`_Depth > 0` 时跳过结算，不算异常。
-- **键位集合变更须即时重建监视表**（`RefreshWatchKeysNow`）：`HotkeyService` 在 `HotkeyOff`/`EnableByTab` 后会立刻清空 `ActiveHotkeys`，若等 5s 定时刷新，空窗期内会为"本不该有回调"的按下建档并误报。
-- **自证计数**：每次观测按纯键名累计 `arm`/`raceSkip`/`cleared`/`miss`/`discard`/`watchDrop`，快照里给出 `arm≈cleared+miss+discard+watchDrop 为正常`——探针自身漏账时会在这里暴露。

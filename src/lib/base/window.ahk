@@ -159,3 +159,8 @@ IsMouseInClient() {
         return false
     return true
 }
+
+; 判断纯键名是否为鼠标键/滚轮（HotkeyContext 的悬停判定分支用）
+IsMouseKey(pureKey) {
+    return pureKey ~= "i)^(lbutton|rbutton|mbutton|xbutton1|xbutton2|wheel)"
+}

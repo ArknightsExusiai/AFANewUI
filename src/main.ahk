@@ -1,10 +1,9 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Off
 #Warn All, Off
-; 键盘钩子超时护栏：系统红线 300ms，累计超时 11 次即静默摘除钩子
+; 键盘钩子超时护栏
 #HotIfTimeout 100
 
-; 所有模块只定义、零顶层副作用；启动由下方 App.Bootstrap() 显式执行。
 #Include ./lib/base/logger.ahk
 #Include ./lib/base/version.ahk
 #Include ./lib/base/message_box.ahk
@@ -35,7 +34,6 @@
 #Include ./lib/base/custom_hotkey_store.ahk
 #Include ./lib/core/game/game_client_registry.ahk
 #Include ./lib/core/diagnostics/log_exporter.ahk
-#Include ./lib/core/diagnostics/hook_health.ahk
 #Include ./lib/core/launch/app_context.ahk
 #Include ./lib/core/launch/game_auto_start.ahk
 #Include ./lib/core/hotkey/timing_service.ahk
@@ -192,8 +190,6 @@ class App {
 
         StartupMark("热键注册")
         HotkeyService.HotkeyOn()
-
-        HookHealth.Start()
 
         StartupMark("GUI 初始化")
         EventBus.Publish("ChangelogShowRequested")

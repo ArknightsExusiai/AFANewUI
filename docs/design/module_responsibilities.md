@@ -20,11 +20,9 @@
 5. **初始化各域** — `StartupMark("模块初始化")`：`Config.InitPath()` → `GameClientRegistry.Init()` → `LogExporter.Init()` → `HotkeyActionsStart()` → `LevelDetector.Init()` → `KeyBinder.Start()` → `HotkeyService.Init()` → `TimingService.Init()` → `SettingsService.Init()` → `VersionChecker.Init()` → `Updater.Init()` → `ChangelogChecker.Init()` → `ChangelogUI.Init()` → `GameLauncher.Init()`。
 6. **加载设置** — `StartupMark("设置加载")`：`SettingsService.Initialize()` 加载配置；`Logger.RegisterSecret()` 注册 Token 与脚本路径；若 `Logger.PreviousAbnormalFile != ""`（上一会话异常退出）则提示导出诊断包。
 7. **随游戏自动启动校准** — `StartupMark("随游戏自动启动校准")`：`AppContext.SetStartedByGameAutoStart()` + `GameAutoStartManager.Reconcile()`；关闭该功能时若返回 `shouldExit` 则只清理任务并退出。
-8. **资源与游戏按键** — `StartupMark("资源提取")` 起，经 `StartupMark("游戏按键识别")`、`StartupMark("热键注册")`：`FileExtractor.EnsureExtracted()` 提取嵌入资源；`GameKeys.Init()`（读注册表游戏按键 + 启动 10s 轮询定时器，**必须在 `HotkeyOn` 之前**）→ `HotkeyService.HotkeyOn()` 激活热键 → `HookHealth.Start()` 启动键盘钩子健康探针（**必须在 `HotkeyOn` 之后**，其监视键位表来自已注册热键）。
+8. **资源与游戏按键** — `StartupMark("资源提取")` 起，经 `StartupMark("游戏按键识别")`、`StartupMark("热键注册")`：`FileExtractor.EnsureExtracted()` 提取嵌入资源；`GameKeys.Init()`（读注册表游戏按键 + 启动 10s 轮询定时器，**必须在 `HotkeyOn` 之前**）→ `HotkeyService.HotkeyOn()` 激活热键。
 9. **GUI 初始化** — `StartupMark("GUI 初始化")`：发布 `ChangelogShowRequested` → `GuiManager.Start()`（含 Alt+F4 退出热键注册）→ `UpdateUI.Init()`；随游戏自启校准失败的托盘提示在此处（GUI 就绪后）只发一次。
 10. **启动收尾** — `StartupMark("启动收尾")` 至 `StartupMark("")`：发布 `AppStartCompleted`（触发自动更新检查与游戏自动启动）→ `GameMonitor.Start()` → 发布 Legacy 事件 `SetSwitchKey`、`GuiUpdateHotkeyControls`、`GuiUpdateImportantControls`、`GuiUpdateCustomControls` 完成 GUI 初始化 → `StartupMark("")` 输出总耗时。
-
-> 早期版本的 AGENTS.md 曾漏记 `GameClientRegistry.Init()`、`LogExporter.Init()`、`HookHealth.Start()` 三个调用。以本文件为准。
 
 ## 模块职责
 
@@ -78,7 +76,6 @@
 | `core/updater/` | 自动更新全流程：`release_repository.ahk`（GitHub/国内源检查与 changelog 缓存）→ `version_checker.ahk`（门面：首选源/重试/降级）→ `downloader.ahk` → `self_replacer.ahk` → `updater_manager.ahk`（协调器，事件化）；`github_token_service.ahk` 提供 Token 验证（`Validate()`，超时 5000ms，带校验状态缓存）。`ui/updater_ui.ahk` 仅通过事件与 Updater 交互。详见 [key_designs_base.md](key_designs_base.md#双源更新与自动降级) |
 | `core/changelog/changelog_checker.ahk` | 更新公告检查。订阅 `ChangelogShowRequested`，构建 body（经 `ChangelogFormat.LocalizeBody` 裁剪语言）后发布 `ChangelogAvailable` |
 | `core/diagnostics/log_exporter.ahk` | 诊断压缩包导出（`LogExporter` 类）。`CreateArchiveInteractive()` 弹出文件保存对话框，收集所有日志 + 脱敏后的设置文件 + 诊断信息，通过 PowerShell 打包为 ZIP。`OpenLogDirectory()` 打开日志目录 |
-| `core/diagnostics/hook_health.ahk` | 键盘钩子存活探针与自愈（`HookHealth`）。详见 [key_designs_base.md](key_designs_base.md#键盘钩子健康探针) |
 
 ### ui 层（依赖 core/base）
 
