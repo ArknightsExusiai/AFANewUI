@@ -21,7 +21,7 @@ class GameMonitor {
     static Start() {
         if (this._CheckTimer = "")
             this._CheckTimer := GameMonitor.CheckGameStatus.Bind(GameMonitor)
-        SetTimer this._CheckTimer, 400
+        SetTimer this._CheckTimer, 200
         EventBus.Subscribe("ForegroundClientChanged", (data) => this._HandleForegroundClientChanged(data))
     }
 
@@ -83,7 +83,7 @@ class GameMonitor {
         autoPause := Config.ReadImportantFromIni("AutoBeginPause") == "1"
         if ((autoPause || Config.ReadImportantFromIni("AutoBeginSpeed") == "1") && GameTarget.IsActive()) {
             autoSpeed := Config.ReadImportantFromIni("AutoBeginSpeed") == "1"
-            ; 寻找黑屏（17 点采样，允许 1 点被遮挡）
+            ; 寻找黑屏（17 点采样，允许 3 点被遮挡）
             if (this._BlackScreenDetected == false) {
                 points := GameMonitor.BlackScreenPoints()
                 if !points
@@ -102,7 +102,7 @@ class GameMonitor {
                         this._BlackScreenDetected := true
                         Logger.Info("GameMonitor", "检测到黑屏，可能是进入关卡前的加载，开始识别 Loading（自动暂停=" (autoPause ? "开" : "关") "，自动二倍速=" (autoSpeed ? "开" : "关") "）")
                         this._ScheduleTimeout(-8000)
-                        this.SetPollInterval(200)
+                        this.SetPollInterval(100)
                     }
                 } finally {
                     if (oldCtx)
