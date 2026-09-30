@@ -181,7 +181,7 @@ class GameKeys {
             this._Bindings := this._GetBindingsForServer(data.serverId)
             if (Config.AllImportant.Has("LastActiveServer"))
                 Config.SetImportant("LastActiveServer", data.serverId)
-            Logger.Debug("GameKeys", "前台区服切换：" data.serverId)
+            Logger.Info("GameKeys", "前台区服切换：" data.serverId)
         }
     }
 
@@ -385,7 +385,7 @@ class GameKeys {
                 }
             }
         } catch Error as loopErr {
-            Logger.Debug("GameKeys", "区服 " serverId " 注册表枚举异常：" loopErr.Message)
+            Logger.Warn("GameKeys", "区服 " serverId " 注册表枚举异常：" loopErr.Message)
             return result
         }
 
@@ -405,7 +405,7 @@ class GameKeys {
         }
 
         if (targetValueName = "") {
-            Logger.Debug("GameKeys", "区服 " serverId " 未找到 KEYBOARD_SETTING_V* 键值")
+            Logger.Warn("GameKeys", "区服 " serverId " 未找到 KEYBOARD_SETTING_V* 键值")
             return result
         }
 

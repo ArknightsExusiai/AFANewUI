@@ -77,7 +77,7 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 | [文案键 = 中文原文](docs/design/i18n.md) | 新增用户可见文案即以中文原文为键，同步 zh-Hant / ja-JP / ko-KR / en-US 四表；日志/调试/内部异常**保持中文不译** |
 | [大资源表拆 `Data2`](docs/design/i18n.md#资源编译内置-map) | AHK 单条静态 `Map(...)` 约 19KB 解析上限，勿把 `Data2` 合并回单表 |
 | [布局/文案改动须五语言人工验证](docs/design/i18n.md#布局文案改动后须五语言人工验证) | 按 `test/test_i18n_four_language_regression.md` 逐语言核对换行/截断/对齐；优先"测量真实宽度"而非估算值 |
-| [`Logger.Debug` 恒持久化](docs/design/key_designs_base.md#logger-日志系统) | 无条件写盘（不受开关控制）；`DebugEnabled` 仅控制实时调试控制台 |
+| [`Logger.Debug` 不落盘](docs/design/key_designs_base.md#logger-日志系统) | 只进 DebugView 与实时调试控制台，不写日志文件、不进 critical 上下文；需要落盘的信息一律用 `Info`/`Warn`/`Error` |
 
 ### 调试与诊断
 

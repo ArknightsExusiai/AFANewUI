@@ -26,7 +26,7 @@ class GameMonitor {
     }
 
     static _HandleForegroundClientChanged(data) {
-        Logger.Debug("GameMonitor", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
+        Logger.Info("GameMonitor", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
     }
 
     ; 调整主轮询定时器间隔
@@ -188,7 +188,7 @@ class GameMonitor {
                 SetTimer this._PauseWaitTimerTick(), -this.PauseWaitIntervalMs
                 return
             }
-            Logger.Debug("GameMonitor", "等待倍速按钮：命中白色像素（x=" Round(FoundX) " y=" Round(FoundY) "），进入进关后处理")
+            Logger.Info("GameMonitor", "等待倍速按钮：命中白色像素（x=" Round(FoundX) " y=" Round(FoundY) "），进入进关后处理")
             autoPause := Config.ReadImportantFromIni("AutoBeginPause") == "1"
             autoSpeed := Config.ReadImportantFromIni("AutoBeginSpeed") == "1"
             if autoPause {
@@ -213,7 +213,7 @@ class GameMonitor {
             handHit := SafeImageSearch(&OutputVarX, &OutputVarY, TobC.ImageRegion.HLX, TobC.ImageRegion.HUY, TobC.ImageRegion.HRX, TobC.ImageRegion.HDY, "*90 " FileExtractor.TakeOver3Path)
             if !handHit
                 isProxy := false
-            Logger.Debug("GameMonitor", "代理指挥判定：接管按钮=" (takeoverHit ? "命中" : "未命中") "，手图标=" (handHit ? "命中" : "未命中") "，判定=" (isProxy ? "代理" : "非代理"))
+            Logger.Info("GameMonitor", "代理指挥判定：接管按钮=" (takeoverHit ? "命中" : "未命中") "，手图标=" (handHit ? "命中" : "未命中") "，判定=" (isProxy ? "代理" : "非代理"))
             if autoPause {
                 if isProxy {
                     GameKeys.SendDown("pauseBattle")
@@ -226,7 +226,7 @@ class GameMonitor {
             }
             ; 开局自动二倍速：非代理作战时切一次倍速
             if (autoSpeed && !isProxy) {
-                Logger.Debug("GameMonitor", "开局自动二倍速：开始注入倍速键（自动暂停=" (autoPause ? "开" : "关") "）")
+                Logger.Info("GameMonitor", "开局自动二倍速：开始注入倍速键（自动暂停=" (autoPause ? "开" : "关") "）")
                 GameKeys.Tap("changeSpeed")
                 Logger.Info("GameMonitor", "开局自动二倍速：已切换倍速")
             } else {

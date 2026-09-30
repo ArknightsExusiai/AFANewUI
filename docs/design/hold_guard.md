@@ -67,7 +67,7 @@
 
 定时器可能先按物理态清了按住周期并发了尾部，随后真正的 `X Up` 变体才到达。此时 `KeyForward.InterceptedKeys` / `DownHandled` 已被清空，若无保护，Up 变体可能给游戏补发一个多余的 up。
 
-处理：`KeyForward.ActionUpForward` 在补发前查 `HoldGuard.WasClosedByFallback(pureKey)`——该键的按住周期已由兜底路径收尾过，则跳过本次补发并记 DEBUG（`迟到抬起`）。
+处理：`KeyForward.ActionUpForward` 在补发前查 `HoldGuard.WasClosedByFallback(pureKey)`——该键的按住周期已由兜底路径收尾过，则跳过本次补发并记 INFO（`迟到抬起`）。
 
 ## 3. 旧模型的历史故障链（2026-02 → 2026-09）
 
@@ -117,8 +117,8 @@ issue 原文只记到「`USleep` 超时 382ms」，2026-09-29 的复现补全了
 
 ## 5. 观测与判读
 
-- **日志**：按住周期活跃时每 3s 一条节流 DEBUG（`按住周期：key=X 已按住 Ns`）。正常长按只留 DEBUG；WARN 收窄为「**物理态已抬起但按住周期未结束**」这类结构性异常——不再把「长按 30s」当异常报。
-- **日志与 `HoldGuard.Snapshot()`**：`hold=[key+Ns(phys=down/up) …]` 给出此刻哪些键处于按住周期、已持续多久、物理态如何。按住周期常驻时这里会一直显示该键 —— 这是**预期行为**（第 2.2 节），不是线程泄漏。按住周期活跃时每 3s 一条节流 DEBUG。
+- **日志**：按住周期活跃时每 3s 一条节流 INFO（`按住周期：key=X 已按住 Ns`）。正常长按只留 INFO；WARN 收窄为「**物理态已抬起但按住周期未结束**」这类结构性异常——不再把「长按 30s」当异常报。
+- **日志与 `HoldGuard.Snapshot()`**：`hold=[key+Ns(phys=down/up) …]` 给出此刻哪些键处于按住周期、已持续多久、物理态如何。按住周期常驻时这里会一直显示该键 —— 这是**预期行为**（第 2.2 节），不是线程泄漏。按住周期活跃时每 3s 一条节流 INFO。
 - **判读顺序**（配合 [input_stall_diagnosis.md](input_stall_diagnosis.md)）：先看 `hold`（有没有按住周期没释放）→ 再看 `HoldGuard` 的兜底 WARN 与 `KeyForward` 等待物理松开日志。
 
 

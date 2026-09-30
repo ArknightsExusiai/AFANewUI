@@ -1164,13 +1164,13 @@ class GuiManager {
     }
 
     static _OnGameClientsChanged(data) {
-        Logger.Debug("Gui", "游戏客户端集合变化，数量=" data.clients.Length)
+        Logger.Info("Gui", "游戏客户端集合变化，数量=" data.clients.Length)
         this._RefreshServerPathsText()
         this._RefreshRunningClientsText()
     }
 
     static _OnForegroundClientChanged(data) {
-        Logger.Debug("Gui", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
+        Logger.Info("Gui", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
         this._RefreshRunningClientsText()
         this._UpdateTrayServer(data.serverId)
     }

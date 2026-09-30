@@ -362,7 +362,7 @@ class UpdateDownloader {
             this.ChunkRetries := 0
             this.LastChunkTime := A_TickCount
             this._ReportProgress()
-            Logger.Debug("UpdateDownloader", "分块完成：" this.ChunkIndex "/" this.TotalChunks "，loaded=" this.LoadedBytes "/" this.TotalBytes)
+            Logger.Info("UpdateDownloader", "分块完成：" this.ChunkIndex "/" this.TotalChunks "，loaded=" this.LoadedBytes "/" this.TotalBytes)
 
             SetTimer(() => UpdateDownloader._DownloadNextChunk(), -10)
 

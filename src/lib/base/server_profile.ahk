@@ -278,7 +278,7 @@ class ServerProfile {
                     return true
             }
         } catch Error as e {
-            Logger.Debug("ServerProfile", "注册表按键设置检查失败：" root " - " e.Message)
+            Logger.Info("ServerProfile", "注册表按键设置检查失败：" root " - " e.Message)
         }
         return false
     }

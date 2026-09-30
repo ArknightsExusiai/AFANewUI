@@ -81,7 +81,7 @@ class CustomScriptEngine {
         entry := this._Runtime[id]
         if !entry.valid || entry.steps.Length = 0
             return
-        Logger.Debug("CustomScript", "触发自定义功能：" id "，步骤数=" entry.steps.Length)
+        Logger.Info("CustomScript", "触发自定义功能：" id "，步骤数=" entry.steps.Length)
         if entry.type = "combat" && !GuardInLevel("CustomScript:" id, ThisHotkey)
             return
         this.Execute(entry.steps)

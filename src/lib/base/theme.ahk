@@ -194,7 +194,7 @@ class Theme {
         gui.BackColor := this.Color("Window")
         gui.SetFont("c" this.Color("Text"))
         this._TitleBar(gui.Hwnd)
-        Logger.Debug("Theme", "登记窗口：hwnd=" gui.Hwnd ", windows=" this._Windows.Count)
+        Logger.Info("Theme", "登记窗口：hwnd=" gui.Hwnd ", windows=" this._Windows.Count)
     }
 
     static _TitleBar(hwnd) {
@@ -218,7 +218,7 @@ class Theme {
                 this._WarnOnce("DwmSet:" attribute, "DWM 属性设置失败，保留原生外观，attribute=" attribute ", HRESULT=" Format("0x{:08X}", hr & 0xFFFFFFFF))
                 return false
             }
-            Logger.Debug("Theme", "DWM属性：hwnd=" hwnd ", attribute=" attribute ", value=" value)
+            Logger.Info("Theme", "DWM属性：hwnd=" hwnd ", attribute=" attribute ", value=" value)
             return true
         } catch as err {
             this._WarnOnce("DwmCall:" attribute, "DWM 调用失败，attribute=" attribute ": " err.Message)
@@ -613,7 +613,7 @@ class Theme {
             this._Controls.Delete(controlHwnd)
         if this._Windows.Has(hwnd) {
             this._Windows.Delete(hwnd)
-            Logger.Debug("Theme", "注销窗口：hwnd=" hwnd ", controls=" removed.Length ", windows=" this._Windows.Count)
+            Logger.Info("Theme", "注销窗口：hwnd=" hwnd ", controls=" removed.Length ", windows=" this._Windows.Count)
         }
     }
 

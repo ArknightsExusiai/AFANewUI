@@ -87,7 +87,7 @@ class StatusBarHints {
             args := IsObject(entry.Args) ? entry.Args() : []
             this._SetText(entry.Key, args*)
         } catch Error as e {
-            Logger.Debug("StatusBarHints", "OnMouseMove 跳过: " e.Message)
+            Logger.Warn("StatusBarHints", "OnMouseMove 跳过: " e.Message)
         }
     }
 

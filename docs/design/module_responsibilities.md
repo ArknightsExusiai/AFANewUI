@@ -53,7 +53,7 @@
 | `base/version.ahk` | 版本管理（`Version` 类）：`Version.Number` 是 AFA 版本号唯一来源；同文件承载 Ahk2Exe 编译元数据指令（版本/语言/名称/公司/版权/描述） |
 | `base/version_utils.ahk` | 版本/JSON 纯工具（`VersionUtils`），供 updater/changelog 复用：JSON 字符串反转义、版本号比较等 |
 | `base/changelog_format.ahk` | 更新公告多语言裁剪（`ChangelogFormat`）。Release body 用 HTML 注释分段（`<!-- afa:lang zh-Hans -->`），渲染时按当前语言裁剪，无标记则回退整篇原文；裁剪前先剥离 GitHub 页面用的 `<details>/<summary>` 折叠标签 |
-| `base/tray.ahk` | 托盘提示工具（`ShowTrayTip`/`HideTrayTip`）。包装 AHK 内建 `TrayTip`，避免 core 层散落内建调用；发出前 `Logger.Debug` 记录（标题+消息前缀截断），便于核对「没看到提示」是否真的没发出 |
+| `base/tray.ahk` | 托盘提示工具（`ShowTrayTip`/`HideTrayTip`）。包装 AHK 内建 `TrayTip`，避免 core 层散落内建调用；发出前 `Logger.Info` 记录（标题+消息前缀截断），便于核对「没看到提示」是否真的没发出 |
 | `base/window.ahk` | 窗口/屏幕工具，供 core 与 UI 复用。`SafeWinGetClientPos()` 窗口不存在时返回 false 而非抛 `TargetError`；安全像素搜索包装（`PixelSearch` 内部 GDI 调用失败会抛 `OSError`） |
 
 ### core 层（依赖 base）

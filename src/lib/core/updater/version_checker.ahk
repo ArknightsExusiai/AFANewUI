@@ -43,9 +43,9 @@ class VersionChecker {
         ReleaseRepository.CacheFile := configDir "\version_cache.json"
     }
 
-    ; 内部：输出调试日志（DEBUG 已恒持久化，无需门控）
+    ; 内部：输出调试日志
     static _Log(message) {
-        Logger.Debug("VersionChecker", message)
+        Logger.Info("VersionChecker", message)
     }
 
     ; 内部：输出请求报文日志

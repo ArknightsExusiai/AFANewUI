@@ -86,7 +86,7 @@ Edit 仅接管深色非客户区边框，保留原生光标、选区与滚动；
 
 Theme 生命周期与低频模式变化使用现有 Logger；绘制故障按操作去重并延后写入（`_WarnOnce` 入队 + 一次性定时器 flush），不逐帧或逐次鼠标移动记录。主题逻辑改动运行 `test/scripts/theme_test.ahk`（`Theme.Resolve`/`Normalize` 与 `Constants.NormalizeThemeMode` 纯逻辑 + 二者一致性断言，不建窗、不读注册表），再跑 `test/scripts/smoke_test.ahk`（全模块 include、零顶层副作用），通过不等同于 GUI 验收。
 
-`SafeWinGetClientPos(&ww,&wh)` 窗口不存在时返回 false（不抛 `TargetError`）；`SafePixelSearch`/`SafeImageSearch` 把 `PixelSearch`/`ImageSearch` 内部的 GDI `OSError`（搜索区域落在可见桌面外、副屏拔掉、窗口移出屏幕、锁屏/RDP 断开）按"未命中"处理并 **60 秒节流**记 Warn——失败时单次轮询会产生十余个搜索调用，逐次落盘在 `Logger.Debug` 恒持久化的前提下会刷屏。`ImageSearch` 在 AHK v2 无独立 Options 参数，容差/缩放前缀拼在 `ImageFile` 字符串内（如 `"*90 " path`），`ValueError`（图库加载失败）同样按未命中处理，资源缺失不应弹框打断监控。
+`SafeWinGetClientPos(&ww,&wh)` 窗口不存在时返回 false（不抛 `TargetError`）；`SafePixelSearch`/`SafeImageSearch` 把 `PixelSearch`/`ImageSearch` 内部的 GDI `OSError`（搜索区域落在可见桌面外、副屏拔掉、窗口移出屏幕、锁屏/RDP 断开）按"未命中"处理并 **60 秒节流**记 Warn——失败时单次轮询会产生十余个搜索调用，逐次记 Warn 会刷屏、并反复把最近日志抄进 critical 文件。`ImageSearch` 在 AHK v2 无独立 Options 参数，容差/缩放前缀拼在 `ImageFile` 字符串内（如 `"*90 " path`），`ValueError`（图库加载失败）同样按未命中处理，资源缺失不应弹框打断监控。
 
 **抓屏必须走屏幕 DC**：`SafeCaptureClientRect()` 用 `GetDC(NULL)` + 客户区屏幕坐标 `BitBlt`，**不能用 `GetDC(hwnd)`**——DX/Unity 画面不经过窗口 GDI DC，窗口 DC 抓到的是黑屏或旧帧（`PixelSearch` 同为屏幕合成路径）。返回 BGRA 4 字节、自顶向下位图；调用方需自行切到 per-monitor DPI aware（与 `SafeWinGetClientPos` 同坐标系），并保证目标窗口即 `GameTarget`、客户区 `(0,0)` 对应位图 `(0,0)`；失败返回 false。
 

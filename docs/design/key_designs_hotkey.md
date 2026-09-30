@@ -102,7 +102,7 @@
 
 `LevelDetector` 的 SetTimer 轮询与热键回调同为 priority 0，AHK 单线程下新线程会中断当前线程（`misc/Threads.htm#Interrupt`）——Poll 的 PixelSearch（每次最多 16 色）会随机插入时序敏感动作的 `USleep` 忙等，拉长实际间隔（5~50ms）导致过帧波动（一次过两帧/不过帧）。
 
-修复：时序敏感动作的 Send/Touch 序列加中断保护（单次 `Tap` 动作无需）——**过帧三件套（16/33/166ms）保留 `Critical`/`Critical "Off"`**（帧数精确性依赖完全不可中断，连热键也不放行）；**暂停选中/技能/撤退、一键技能/撤退、视角切换 v1.9.4 起改用 `Thread "NoTimers"`/`Thread "NoTimers", false`**（只挡定时器轮询，放行其他热键——动作中可即时响应倍速等热键；`Critical` 会连热键一起挡掉，故非过帧动作不再用）；`USleep` 到期时记录 overshoot 诊断日志（`current-target` 换算毫秒，≥1ms 时 `Logger.Debug`）便于观察中断。
+修复：时序敏感动作的 Send/Touch 序列加中断保护（单次 `Tap` 动作无需）——**过帧三件套（16/33/166ms）保留 `Critical`/`Critical "Off"`**（帧数精确性依赖完全不可中断，连热键也不放行）；**暂停选中/技能/撤退、一键技能/撤退、视角切换 v1.9.4 起改用 `Thread "NoTimers"`/`Thread "NoTimers", false`**（只挡定时器轮询，放行其他热键——动作中可即时响应倍速等热键；`Critical` 会连热键一起挡掉，故非过帧动作不再用）；`USleep` 到期时的 overshoot 诊断（`current-target` 换算毫秒，≥1ms 记日志）目前整段注释停用，需要观察中断时再启用。
 
 ## GameKeys 类
 

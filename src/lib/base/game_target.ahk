@@ -14,7 +14,7 @@ class GameTarget {
     static Bind(hwnd, pid, exePath, serverId) {
         if (this._Hwnd = hwnd && this._Pid = pid && this._ExePath = exePath && this._ServerId = serverId)
             return
-        Logger.Debug("GameTarget", "绑定目标窗口 hwnd=" hwnd " pid=" pid " serverId=" serverId " exe=" exePath)
+        Logger.Info("GameTarget", "绑定目标窗口 hwnd=" hwnd " pid=" pid " serverId=" serverId " exe=" exePath)
         this._Hwnd := hwnd
         this._Pid := pid
         this._ExePath := exePath
@@ -24,7 +24,7 @@ class GameTarget {
     ; 解绑，回到 ahk_exe 宽松回退
     static Unbind() {
         if (this._Hwnd != 0)
-            Logger.Debug("GameTarget", "解绑目标窗口 hwnd=" this._Hwnd " pid=" this._Pid " serverId=" this._ServerId)
+            Logger.Info("GameTarget", "解绑目标窗口 hwnd=" this._Hwnd " pid=" this._Pid " serverId=" this._ServerId)
         this._Hwnd := 0
         this._Pid := 0
         this._ExePath := ""

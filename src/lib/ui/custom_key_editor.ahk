@@ -177,7 +177,7 @@ class CustomKeyEditor {
         Hotkey("LButton", ObjBindMethod(CustomKeyEditor, "_OnPickKey"), "On")
         HotIf
         this.PickingActive := true
-        Logger.Debug("CustomKeyEditor", "坐标拾取会话开始")
+        Logger.Info("CustomKeyEditor", "坐标拾取会话开始")
     }
 
     static _StopPicking() {
@@ -190,7 +190,7 @@ class CustomKeyEditor {
         HotIf
         if this.PickingActive {
             this.PickingActive := false
-            Logger.Debug("CustomKeyEditor", "坐标拾取会话结束")
+            Logger.Info("CustomKeyEditor", "坐标拾取会话结束")
         }
     }
 

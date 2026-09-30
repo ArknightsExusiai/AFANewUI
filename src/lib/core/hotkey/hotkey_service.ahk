@@ -86,7 +86,7 @@ class HotkeyService {
 
     ; 处理关卡状态变化
     static _HandleInLevelChanged(data) {
-        Logger.Debug("Hotkey", "关卡状态变化：inLevel=" data.inLevel)
+        Logger.Info("Hotkey", "关卡状态变化：inLevel=" data.inLevel)
     }
 
     ; 处理游戏按键变更
@@ -109,7 +109,7 @@ class HotkeyService {
 
     ; 处理前台客户端变化
     static _HandleForegroundClientChanged(data) {
-        Logger.Debug("Hotkey", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
+        Logger.Info("Hotkey", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
     }
 
     ; 处理 UI 标签页切换请求

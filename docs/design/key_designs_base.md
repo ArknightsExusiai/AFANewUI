@@ -18,7 +18,7 @@
 
 **退出回调有顺序依赖**：`Theme.Stop` 以 `OnExit(callback, -1)` 注册（优先级更低，先执行），`main.ahk` 的 `HandleAfaExit`/`Logger.HandleExit` 负责写 `[Shutdown]` 标记——若把写标记的回调排到 `Theme.Stop` 之前，标记会在主题清理前落盘，异常退出检测（下一会话据此判定上次是否正常退出）就失去意义。
 
-**DEBUG 恒持久化**（v2.0.3+）：`Logger.Debug` 无条件写盘（不受任何开关控制），用户不开调试模式也能拿到完整运行轨迹；`DebugEnabled`（Important）仅控制实时调试控制台显示。
+**DEBUG 不落盘**（v2.1.1+）：`Logger.Debug` 只走 `OutputDebug` 与实时调试控制台，不写日志文件、也不进 `RecentLines`（因此不会出现在 WARN/ERROR 的 critical 上下文里）；`DebugEnabled`（Important）仅控制实时调试控制台显示。需要留在日志文件里的信息（动作执行、透传配对、识别判定、更新报文等）一律用 `Info`/`Warn`/`Error` 记录，`Debug` 只留给"盯着控制台时才关心"的高频明细。
 
 透传日志按键按下→松开配对合并为一条；高频源（LevelDetector 每 20 次轮询、滚轮 100ms）均已有节流。所有日志通过 `OutputDebug` 同步输出到 DebugView。容量清理依赖缓存指标（`CachedOrdinaryFiles`/`CachedOrdinaryBytes` 等），每 64 次写入或有容量压力时触发。
 
@@ -32,7 +32,7 @@
 
 `AllocConsole` 失败（进程已有控制台，如从终端启动）→ 静默降级并**复位 `ConsoleEnabled=false`**（避免 `CloseConsole` 误 `FreeConsole` 脱离调用方终端）。`ConsoleTipShown` 内存标志控"当次会话仅首次"提示。
 
-`DebugEnabled`（Important）经 `SettingsService.Initialize()` 接线**仅控制控制台**（`SetConsoleEnabled`，单源，勿重读 INI 造成双源）；`version_checker` 的 `IsDebugLogging()`/`DebugMode` 门控已随 DEBUG 恒持久化删除，`_Log` 直接写 `Logger.Debug`。
+`DebugEnabled`（Important）经 `SettingsService.Initialize()` 接线**仅控制控制台**（`SetConsoleEnabled`，单源，勿重读 INI 造成双源）；`version_checker` 无 `IsDebugLogging()`/`DebugMode` 门控，`_Log` 直接写 `Logger.Info`——报文级日志要留在文件里就不能用 `Debug`。
 
 ## Config 读写分离与工作副本
 
