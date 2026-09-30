@@ -1,25 +1,4 @@
 ; == 高精度延迟工具 ==
-
-; 高精度计时读点（QueryPerformanceCounter 原始值，非毫秒；两次相减后交 QpcMs() 换算）
-Qpc() {
-    static freq := 0
-    if (freq = 0)
-        DllCall("QueryPerformanceFrequency", "Int64*", &freq)
-    counter := 0
-    DllCall("QueryPerformanceCounter", "Int64*", &counter)
-    return counter
-}
-
-; QPC 计数差 → 毫秒（取不到频率时返回 -1）
-QpcMs(delta) {
-    static freq := 0
-    if (freq = 0)
-        DllCall("QueryPerformanceFrequency", "Int64*", &freq)
-    if (freq = 0)
-        return -1
-    return delta * 1000.0 / freq
-}
-
 ; 高精度延迟
 USleep(delay_ms) {
     if (delay_ms <= 0)
