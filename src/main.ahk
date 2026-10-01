@@ -59,6 +59,7 @@
 #Include ./lib/ui/gui.ahk
 #Include ./lib/ui/custom_key_editor.ahk
 #Include ./lib/core/monitor/game_monitor.ahk
+#Include ./lib/core/monitor/hook_monitor.ahk
 
 HandleAfaExit(exitReason, exitCode) {
     Logger.HandleExit(exitReason, exitCode)
@@ -209,6 +210,7 @@ class App {
         EventBus.Publish("AppStartCompleted")
 
         GameMonitor.Start()
+        HookMonitor.Init()
 
         EventBus.Publish("SetSwitchKey") ; Legacy
 
