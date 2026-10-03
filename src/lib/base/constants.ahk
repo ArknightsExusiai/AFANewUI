@@ -2,7 +2,7 @@
 ; 全局常量定义；热键元数据由 base/hotkey_schema.ahk 单一来源生成。
 
 class Constants {
-    static DefaultTabOrder := "keyBind,quick,strongHoldProtocol,customKeys,other"
+    static DefaultTabOrder := "keyBind,quick,strongHoldProtocol,customKeys,specialOps,other"
 
     ; 界面主题模式：唯一合法值集合与规范化规则
     static ThemeModes := ["auto", "light", "dark"]

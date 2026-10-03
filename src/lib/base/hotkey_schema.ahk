@@ -22,6 +22,7 @@ class HotkeySchema {
         {id: "PauseRetreat", nameKey: "暂停撤退", descKey: "暂停时，鼠标移动到想要撤退的单位上，按下后自动选中并撤退", group: "combat", defaultKey: "XButton1", guarded: true, onUp: false, noActivate: false},
         {id: "AutoBeginPauseSwitch", nameKey: "开局自动暂停开关", descKey: "切换「开局自动暂停」的开关", group: "combat", defaultKey: "", guarded: false, onUp: false, noActivate: true},
         {id: "AutoBeginSpeedSwitch", nameKey: "开局自动二倍速开关", descKey: "切换「开局自动二倍速」的开关", group: "combat", defaultKey: "", guarded: false, onUp: false, noActivate: true},
+        {id: "AutoBeginPauseHold", nameKey: "长按开局暂停", descKey: "关卡加载时按住，直到进入关卡后自动暂停（不受「启用开局自动暂停」开或关的影响）", group: "combat", defaultKey: "", guarded: false, onUp: false, noActivate: true},
         ; ---- 快捷操作 ----
         {id: "LButtonClick", nameKey: "模拟左键点击", descKey: "模拟按下鼠标左键", group: "quick", defaultKey: "", guarded: false, onUp: false, noActivate: false},
         {id: "Harvest", nameKey: "基建快速收取", descKey: "点击屏幕左下角的基建收取按钮收取产物", group: "quick", defaultKey: "", guarded: false, onUp: false, noActivate: false},

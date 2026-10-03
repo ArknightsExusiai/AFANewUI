@@ -35,7 +35,7 @@ class GuiManager {
 
     ; 窗口尺寸常量
     static GuiWidth := 720
-    static TabWidth := this.GuiWidth / 5   ; 顶部标签创建期宽度（5 个默认标签等分；可见数变化由 LayoutTopTabs 动态重排）
+    static TabWidth := this.GuiWidth / 6   ; 顶部标签创建期宽度（6 个默认标签等分；可见数变化由 LayoutTopTabs 动态重排）
     static ColWidth := this.GuiWidth / 2
     static GuiXMargin := 30
     static BtnW := 100
@@ -44,6 +44,7 @@ class GuiManager {
     static KeybindControls := []      ; 常规作战相关控件
     static QuickControls := [] ; 快捷操作相关控件
     static StrongHoldProtocolControls := [] ; 卫戍协议相关控件
+    static SpecialOpsControls := []   ; 特殊操作相关控件
     static OtherSettingsControls := [] ; 其他设置相关控件
     static NavItems := []              ; 左侧导航项 Text 控件列表
     static NavIndicators := []        ; 每个导航项的竖线指示器
@@ -103,6 +104,8 @@ class GuiManager {
     static _InitialCustomHotkeys := []  ; 自定义按键快照（脏值对比）
     static TxtCustomKeys := ""          ; "自定义按键"标签文本
     static TabCustomKeys := ""          ; "自定义按键"标签点击区域
+    static TxtSpecialOps := ""          ; "特殊操作"标签文本
+    static TabSpecialOps := ""          ; "特殊操作"标签点击区域
     ; 具有对应 GUI 控件的 Important 设置；不直接遍历 Config.AllImportant，后者还包含内部字段
     static GuiImportantKeys := ["Frame", "AutoExit", "AutoOpenSettings", "ExitOnWindowClose",
         "DefaultStrongHoldProtocol", "TabOrder", "HiddenTabs", "AutoRunGame", "AutoStartWithGame", "GamePath",
@@ -195,22 +198,27 @@ class GuiManager {
         this.TabOther := Theme.Add(this.MainGui, "Text", "xs y0 h25 w" this.TabWidth " Center BackgroundTrans")
         this.TxtCustomKeys := Theme.Add(this.MainGui, "Text", "ys h20 w" this.TabWidth " Center Section", I18n.T("自定义按键"))
         this.TabCustomKeys := Theme.Add(this.MainGui, "Text", "xs y0 h25 w" this.TabWidth " Center BackgroundTrans")
+        this.TxtSpecialOps := Theme.Add(this.MainGui, "Text", "ys h20 w" this.TabWidth " Center Section", I18n.T("特殊操作"))
+        this.TabSpecialOps := Theme.Add(this.MainGui, "Text", "xs y0 h25 w" this.TabWidth " Center BackgroundTrans")
         ; 为标签添加点击事件
         this.TabKeybind.OnEvent("Click", (*) => this.SwitchTab("keyBind"))
         this.TabQuick.OnEvent("Click", (*) => this.SwitchTab("quick"))
         this.TabStrongHoldProtocol.OnEvent("Click", (*) => this.SwitchTab("strongHoldProtocol"))
         this.TabOther.OnEvent("Click", (*) => this.SwitchTab("other"))
         this.TabCustomKeys.OnEvent("Click", (*) => this.SwitchTab("customKeys"))
+        this.TabSpecialOps.OnEvent("Click", (*) => this.SwitchTab("specialOps"))
         StatusBarHints.Register(this.TxtKeybind, "切换到「常规作战」页面")
         StatusBarHints.Register(this.TxtQuick, "切换到「快捷操作」页面")
         StatusBarHints.Register(this.TxtStrongHoldProtocol, "切换到「卫戍协议」页面")
         StatusBarHints.Register(this.TxtOther, "切换到「其他设置」页面")
         StatusBarHints.Register(this.TxtCustomKeys, "切换到「自定义按键」页面")
+        StatusBarHints.Register(this.TxtSpecialOps, "切换到「特殊操作」页面")
         StatusBarHints.Register(this.TabKeybind, "切换到「常规作战」页面")
         StatusBarHints.Register(this.TabQuick, "切换到「快捷操作」页面")
         StatusBarHints.Register(this.TabStrongHoldProtocol, "切换到「卫戍协议」页面")
         StatusBarHints.Register(this.TabOther, "切换到「其他设置」页面")
         StatusBarHints.Register(this.TabCustomKeys, "切换到「自定义按键」页面")
+        StatusBarHints.Register(this.TabSpecialOps, "切换到「特殊操作」页面")
         this.TabItems := [
             {
                 Id: "keyBind",
@@ -241,6 +249,14 @@ class GuiManager {
                 Label: I18n.T("自定义按键"),
                 TextControl: this.TxtCustomKeys,
                 ClickControl: this.TabCustomKeys,
+                CanHide: true,
+                Visible: true
+            },
+            {
+                Id: "specialOps",
+                Label: I18n.T("特殊操作"),
+                TextControl: this.TxtSpecialOps,
+                ClickControl: this.TabSpecialOps,
                 CanHide: true,
                 Visible: true
             },
@@ -317,45 +333,24 @@ class GuiManager {
         this.NotOtherControls.Push(txtFrame)
         this.NotOtherControls.Push(this.GuiFrame)
 
-        ; 自动暂停开关：按键 Edit 对齐右列，复选框贴其左侧
-        autoBeginW := Metrics.TextWidth(I18n.T(" 开局自动暂停"))
-        checkboxAutoBeginPause := Theme.Add(this.MainGui, "Checkbox", "x" (500 - autoBeginW - 20) " yp-2 h24 vAutoBeginPause", I18n.T(" 开局自动暂停"))
-        checkboxAutoBeginPause.OnEvent("Click", (*) => this.TrackChange("AutoBeginPause"))
-        StatusBarHints.Register(checkboxAutoBeginPause, "进入关卡时自动按下暂停，按下绑定的快捷键可切换功能启用或停用")
-        this.MainGui["AutoBeginPause"].Value := Config.GetImportant("AutoBeginPause")
-        checkboxAutoBeginPause.GetPos(&cbPauseX, &cbPauseY)   ; 位置供快捷操作页复用
-        this.KeybindControls.Push(checkboxAutoBeginPause)
-        editAutoBeginPauseSwitch := Theme.Add(this.MainGui, "Edit", "x515 yp w140 Center -TabStop Uppercase v" "AutoBeginPauseSwitch",
-            Config.GetHotkey("AutoBeginPauseSwitch"))
-        StatusBarHints.Register(editAutoBeginPauseSwitch, "按下后切换开局自动暂停的启用/禁用")
-        this.KeybindControls.Push(editAutoBeginPauseSwitch)
+        this.GuiFrame.GetPos(, &auxRowY)
+        auxRowY -= 2
+        auxRowX := 404
 
-        checkboxBackCease := Theme.Add(this.MainGui, "Checkbox", "x" cbPauseX " y" cbPauseY " vBackCeaseOperations", I18n.T(" 使用“返回上级菜单”放弃行动"))
+        checkboxBackCease := Theme.Add(this.MainGui, "Checkbox", "x" auxRowX " y" auxRowY " vBackCeaseOperations", I18n.T(" 使用“返回上级菜单”放弃行动"))
         checkboxBackCease.OnEvent("Click", (*) => this.TrackChange("BackCeaseOperations"))
         StatusBarHints.Register(checkboxBackCease, "使“返回上级菜单”按下ESC的同时按下“放弃行动”键")
         this.MainGui["BackCeaseOperations"].Value := Config.GetImportant("BackCeaseOperations")
         this.QuickControls.Push(checkboxBackCease)
 
-        ; 关卡守卫开关：左缘对齐"开局自动暂停"复选框，按实测宽度左移避免越窗
-        checkboxCombatGuard := Theme.Add(this.MainGui, "Checkbox", "x0 y+12 h24 vInLevelGuard", I18n.T(" 仅在关卡内启用常规作战热键（实验性）"))
+        ; 关卡守卫开关
+        checkboxCombatGuard := Theme.Add(this.MainGui, "Checkbox", "x0 y" auxRowY " h24 vInLevelGuard", I18n.T(" 仅在关卡内启用常规作战热键（实验性）"))
         checkboxCombatGuard.GetPos(&cbGX, &cbGY, &cbGW)
-        checkboxCombatGuard.Move(Min(cbPauseX, 708 - cbGW), cbGY, cbGW)
+        checkboxCombatGuard.Move(Min(auxRowX, 708 - cbGW), cbGY, cbGW)
         checkboxCombatGuard.OnEvent("Click", (*) => this.TrackChange("InLevelGuard"))
         StatusBarHints.Register(checkboxCombatGuard, "识别关卡界面，在关卡界面外禁用常规作战热键，避免误触发")
         this.MainGui["InLevelGuard"].Value := Config.GetImportant("InLevelGuard")
         this.KeybindControls.Push(checkboxCombatGuard)
-
-        ; 二倍速开关：Edit 须先于复选框创建
-        autoBeginSpeedW := Metrics.TextWidth(I18n.T(" 开局自动二倍速"))
-        editAutoBeginSpeedSwitch := Theme.Add(this.MainGui, "Edit", "x155 y" cbGY " w140 Center -TabStop Uppercase v" "AutoBeginSpeedSwitch",
-            Config.GetHotkey("AutoBeginSpeedSwitch"))
-        StatusBarHints.Register(editAutoBeginSpeedSwitch, "按下后切换开局自动二倍速的启用/禁用")
-        this.KeybindControls.Push(editAutoBeginSpeedSwitch)
-        checkboxAutoBeginSpeed := Theme.Add(this.MainGui, "Checkbox", "x" Max(0, 117 - autoBeginSpeedW) " y" cbGY " h24 vAutoBeginSpeed", I18n.T(" 开局自动二倍速"))
-        checkboxAutoBeginSpeed.OnEvent("Click", (*) => this.TrackChange("AutoBeginSpeed"))
-        StatusBarHints.Register(checkboxAutoBeginSpeed, "进入关卡时自动切换到二倍速")
-        this.MainGui["AutoBeginSpeed"].Value := Config.GetImportant("AutoBeginSpeed")
-        this.KeybindControls.Push(checkboxAutoBeginSpeed)
 
         ; 帧数设置提示语
         Theme.SetFont(this.MainGui, "s9 cAccent")
@@ -459,6 +454,64 @@ class GuiManager {
             I18n.T("快捷操作类在未启用卫戍协议方案时全局生效；卫戍协议类仅在启用卫戍协议方案时生效"))
         this.CustomKeyControls.Push(hintCustom3)
         Theme.SetFont(this.MainGui, "s9 cText")
+
+        ; -- 特殊操作 --
+        specialOpsSepY := 48
+        specialOpsRowY := specialOpsSepY + 18
+        ; 开局暂停
+        sepSpecialOpsPause := Theme.Add(this.MainGui, "Text", "x" this.GuiXMargin " y" specialOpsSepY " w" this.GuiWidth - 60 " h1 BackgroundBorder Center Section")
+        sepSpecialOpsPauseTxt := Theme.Add(this.MainGui, "Text", "xs+40 y+-9 Center cMuted", I18n.T("  开局暂停  "))
+        this._SetOverlayZ(sepSpecialOpsPauseTxt, 0)
+        this.SpecialOpsControls.Push(sepSpecialOpsPause)
+        this.SpecialOpsControls.Push(sepSpecialOpsPauseTxt)
+
+        checkboxSpecialOpsPause := Theme.Add(this.MainGui, "Checkbox", "x" this.GuiXMargin " y" specialOpsRowY " h24 vAutoBeginPause", I18n.T(" 启用开局自动暂停"))
+        checkboxSpecialOpsPause.OnEvent("Click", (*) => this.TrackChange("AutoBeginPause"))
+        StatusBarHints.Register(checkboxSpecialOpsPause, "进入关卡时自动按下暂停，按下绑定的快捷键可切换功能启用或停用")
+        this.MainGui["AutoBeginPause"].Value := Config.GetImportant("AutoBeginPause")
+        this.SpecialOpsControls.Push(checkboxSpecialOpsPause)
+
+        txtSpecialOpsPauseToggle := Theme.Add(this.MainGui, "Text", "x" this.GuiXMargin " y" (specialOpsRowY + 33),
+            I18n.T("「启用/禁用开局自动暂停」快捷键"))
+        editSpecialOpsPauseToggle := Theme.Add(this.MainGui, "Edit", "x+20 yp-4 w140 Center -TabStop Uppercase vAutoBeginPauseSwitch",
+            Config.GetHotkey("AutoBeginPauseSwitch"))
+        StatusBarHints.Register(txtSpecialOpsPauseToggle, "按下后切换开局自动暂停的启用/禁用")
+        StatusBarHints.Register(editSpecialOpsPauseToggle, "按下后切换开局自动暂停的启用/禁用")
+        this.SpecialOpsControls.Push(txtSpecialOpsPauseToggle)
+        this.SpecialOpsControls.Push(editSpecialOpsPauseToggle)
+
+        txtSpecialOpsPauseHold := Theme.Add(this.MainGui, "Text", "x" this.GuiXMargin " y" (specialOpsRowY + 66),
+            I18n.T("「长按开局暂停」快捷键"))
+        editSpecialOpsPauseHold := Theme.Add(this.MainGui, "Edit", "x+20 yp-4 w140 Center -TabStop Uppercase vAutoBeginPauseHold",
+            Config.GetHotkey("AutoBeginPauseHold"))
+        StatusBarHints.Register(txtSpecialOpsPauseHold, "关卡加载时按住，直到进入关卡后自动暂停（不受「启用开局自动暂停」开或关的影响）")
+        StatusBarHints.Register(editSpecialOpsPauseHold, "关卡加载时按住，直到进入关卡后自动暂停（不受「启用开局自动暂停」开或关的影响）")
+        this.SpecialOpsControls.Push(txtSpecialOpsPauseHold)
+        this.SpecialOpsControls.Push(editSpecialOpsPauseHold)
+
+        ; 开局二倍速
+        specialOpsSpeedSepY := specialOpsRowY + 66 + 48
+        specialOpsSpeedRowY := specialOpsSpeedSepY + 18
+        sepSpecialOpsSpeed := Theme.Add(this.MainGui, "Text", "x" this.GuiXMargin " y" specialOpsSpeedSepY " w" this.GuiWidth - 60 " h1 BackgroundBorder Center Section")
+        sepSpecialOpsSpeedTxt := Theme.Add(this.MainGui, "Text", "xs+40 y+-9 Center cMuted", I18n.T("  开局二倍速  "))
+        this._SetOverlayZ(sepSpecialOpsSpeedTxt, 0)
+        this.SpecialOpsControls.Push(sepSpecialOpsSpeed)
+        this.SpecialOpsControls.Push(sepSpecialOpsSpeedTxt)
+
+        checkboxSpecialOpsSpeed := Theme.Add(this.MainGui, "Checkbox", "x" this.GuiXMargin " y" specialOpsSpeedRowY " h24 vAutoBeginSpeed", I18n.T(" 启用开局自动二倍速"))
+        checkboxSpecialOpsSpeed.OnEvent("Click", (*) => this.TrackChange("AutoBeginSpeed"))
+        StatusBarHints.Register(checkboxSpecialOpsSpeed, "进入关卡时自动切换到二倍速")
+        this.MainGui["AutoBeginSpeed"].Value := Config.GetImportant("AutoBeginSpeed")
+        this.SpecialOpsControls.Push(checkboxSpecialOpsSpeed)
+
+        txtSpecialOpsSpeedToggle := Theme.Add(this.MainGui, "Text", "x" this.GuiXMargin " y" (specialOpsSpeedRowY + 33),
+            I18n.T("「启用/禁用开局自动二倍速」快捷键"))
+        editSpecialOpsSpeedToggle := Theme.Add(this.MainGui, "Edit", "x+20 yp-4 w140 Center -TabStop Uppercase vAutoBeginSpeedSwitch",
+            Config.GetHotkey("AutoBeginSpeedSwitch"))
+        StatusBarHints.Register(txtSpecialOpsSpeedToggle, "按下后切换开局自动二倍速的启用/禁用")
+        StatusBarHints.Register(editSpecialOpsSpeedToggle, "按下后切换开局自动二倍速的启用/禁用")
+        this.SpecialOpsControls.Push(txtSpecialOpsSpeedToggle)
+        this.SpecialOpsControls.Push(editSpecialOpsSpeedToggle)
 
         ; -- 其他设置 --
         ; 导航区域右侧分割线
@@ -1125,7 +1178,7 @@ class GuiManager {
     static _GetSchemaItems(group) {
         result := []
         for item in HotkeySchema.Items {
-            if (item.group = group && item.id != "AutoBeginPauseSwitch" && item.id != "AutoBeginSpeedSwitch")
+            if (item.group = group && item.id != "AutoBeginPauseSwitch" && item.id != "AutoBeginSpeedSwitch" && item.id != "AutoBeginPauseHold")
                 result.Push(item)
         }
         return result
@@ -1716,6 +1769,11 @@ class GuiManager {
                 try row.Gear.Visible := false
             }
         }
+        for ctrl in this.SpecialOpsControls {
+            if (IsObject(ctrl)) {
+                try ctrl.Visible := false
+            }
+        }
         for ctrl in this.OtherSettingsControls {
             if (IsObject(ctrl)) {
                 try ctrl.Visible := false
@@ -2160,6 +2218,8 @@ class GuiManager {
                     Theme.SetFont(this.TxtStrongHoldProtocol, color)
                 case "customKeys":
                     Theme.SetFont(this.TxtCustomKeys, color)
+                case "specialOps":
+                    Theme.SetFont(this.TxtSpecialOps, color)
                 default:
                     Theme.SetFont(this.TxtOther, color)
             }
@@ -2170,7 +2230,7 @@ class GuiManager {
     static _UpdateTopTabBar(tabName) {
         showModeStatus := this.IsTabVisible("strongHoldProtocol")
         isStrongHold := tabName = "strongHoldProtocol"
-        isOther := tabName = "other" || tabName = "customKeys"
+        isOther := tabName = "other" || tabName = "customKeys" || tabName = "specialOps"
 
         ; 仅当颜色与记录不一致时才 SetFont
         this._SetTabFontOnce("keyBind", tabName = "keyBind" ? "cAccent" : "cText")
@@ -2178,6 +2238,7 @@ class GuiManager {
         this._SetTabFontOnce("strongHoldProtocol", isStrongHold ? "cAccent" : "cText")
         this._SetTabFontOnce("other", tabName = "other" ? "cAccent" : "cText")
         this._SetTabFontOnce("customKeys", tabName = "customKeys" ? "cAccent" : "cText")
+        this._SetTabFontOnce("specialOps", tabName = "specialOps" ? "cAccent" : "cText")
 
         ; 目标文本：卫戍协议页固定显示；功能页随卫戍协议可见性；"其他设置"页额外随上次活动功能页；先算后比再赋值，避免闪烁
         if isStrongHold {
@@ -2223,6 +2284,9 @@ class GuiManager {
         } else if (tabName = "customKeys") {
             this.TxtCustomKeys.GetPos(&x)
             this.TabIndicator.Move(x, 23)
+        } else if (tabName = "specialOps") {
+            this.TxtSpecialOps.GetPos(&x)
+            this.TabIndicator.Move(x, 23)
         } else {
             this.TxtOther.GetPos(&x)
             this.TabIndicator.Move(x, 23)
@@ -2265,6 +2329,13 @@ class GuiManager {
         else if (tabName = "customKeys") {
             this._UpdateTopTabBar("customKeys")
             this._ShowControls(this.CustomKeyControls)
+            this._ShowControls(this.NotOtherControls)
+        }
+
+        ; 切换到特殊操作页
+        else if (tabName = "specialOps") {
+            this._UpdateTopTabBar("specialOps")
+            this._ShowControls(this.SpecialOpsControls)
             this._ShowControls(this.NotOtherControls)
         }
 
@@ -2339,9 +2410,9 @@ class GuiManager {
             return
         this.CurrentTab := tabName
 
-        ; 记录最后选中的功能标签页（排除两个管理型标签页）
-        if (tabName != "other" && tabName != "customKeys") {
-            ; 记录最后选中的功能标签页（排除两个管理型标签页）
+        ; 记录最后选中的功能标签页（排除管理型标签页）
+        if (tabName != "other" && tabName != "customKeys" && tabName != "specialOps") {
+            ; 记录最后选中的功能标签页（排除管理型标签页）
             this.LastActiveTab := tabName
         }
 
@@ -2399,6 +2470,7 @@ class GuiManager {
             this.KeybindControls,
             this.QuickControls,
             this.StrongHoldProtocolControls,
+            this.SpecialOpsControls,
             this.CustomKeyControls,
             this.CustomRows,
             this.OtherSettingsControls,
