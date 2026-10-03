@@ -1,28 +1,21 @@
 ; == 按键透传（守卫拦截时还原原键输入） ==
 class KeyForward {
-    static InterceptedKeys := Map()
-    ; down 已被 AFA 主热键处理过的键：Up 变体据此决定是否放行补发 key up
-    static DownHandled := Map()
-    ; 补发 up 期间的递归抑制记录
-    static SuppressUp := Map()
-    ; 守卫拦截日志节流
+    static InterceptedKeys := Map()     ; down 已被 AFA 主热键处理过的键：Up 变体据此决定是否放行补发 key up
+    static DownHandled := Map()         ; 补发 up 期间的递归抑制记录
+    static SuppressUp := Map()          ; 守卫拦截日志节流
     static GuardLogIntervalMs := 100
-    static _GuardLogNextTick := 0
-    ; 记录每个键上一次成功补发 up 的时刻，用于识别"同一按住周期内出现极短间隔二次补发"
+    static _GuardLogNextTick := 0       ; 记录每个键上一次成功补发 up 的时刻，用于识别"同一按住周期内出现极短间隔二次补发"
     static ReentryWindowMs := 50
-    static _LastForwardTick := Map()
-    ; 每个键最近一次"真实按下"的时刻
+    static _LastForwardTick := Map()    ; 每个键最近一次"真实按下"的时刻
     static _LastForwardDownTick := Map()
-
-    ; 判定当前时刻是否应记录守卫拦截日志：窗口内最多一条，窗口自然滑动，无需主动清理状态
+    ; 判定当前时刻是否应记录守卫拦截日志
     static ShouldLogGuard() {
         if (A_TickCount < this._GuardLogNextTick)
             return false
         this._GuardLogNextTick := A_TickCount + this.GuardLogIntervalMs
         return true
     }
-
-    ; 提取纯键名（去除 ~*$ 前缀、修饰符与 Up 后缀；保留左右修饰键信息 <SHIFT→LShift、>SHIFT→RShift）
+    ; 提取纯键名
     static PureKeyName(ThisHotkey) {
         side := ""
         if (SubStr(ThisHotkey, 1, 1) = "<")
@@ -33,13 +26,13 @@ class KeyForward {
         pureKey := RegExReplace(pureKey, "i) Up$")
         if (pureKey == "")
             return ""
-        ; 左右前缀 + 通用修饰键名 → 对应侧规范键名（<SHIFT→LShift），否则 Send 补发不区分左右会漏释放（如 >SHIFT 卡右 Shift）
+        ; 左右前缀 + 通用修饰键名 → 对应侧规范键名
         if (side != "") {
             static ModNames := Map("shift", "Shift", "ctrl", "Ctrl", "control", "Control", "alt", "Alt", "win", "Win")
             if ModNames.Has(StrLower(pureKey))
                 pureKey := side ModNames[StrLower(pureKey)]
         }
-        ; Hotkey 名称大小写不敏感，但 Map 键默认大小写敏感；统一字母键名称，避免同一物理键因首次注册拼写不同而漏掉 Up
+        ; Hotkey 名称大小写不敏感，但 Map 键默认大小写敏感
         return StrLower(GetKeyName(pureKey))
     }
     ; 透传原热键给游戏
