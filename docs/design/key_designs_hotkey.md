@@ -39,7 +39,7 @@
 
 **动作包装**（#213，`_WrapAction` 于 `_RegisterOne` 注册时套用）：主热键与 OnUp 型动作执行前 `WinActivate` 游戏 + `WinWaitActive`（超时 500ms 则跳过动作，避免按键发往非游戏窗口），激活后不恢复原窗口（焦点留在游戏）；守卫补发 Up 变体（`ActionUpForward`）与 SwitchKey 切换键**不包装**。
 
-拦截正则通过 `GameKeys.GetInterceptPattern()` 动态生成——从注册表读取所有游戏按键 + `Escape|RButton|MButton`。AFA 热键绑定的按键若匹配拦截正则，不加 `~` 前缀（阻止原键传递到游戏），否则加 `~` 前缀（透传）。用户自定义游戏按键后，轮询检测到注册表变更自动重建热键，拦截列表随之更新。
+拦截正则通过 `GameKeys.GetInterceptPattern()` 动态生成——从注册表读取所有游戏按键 + `Escape|RButton|MButton`。AFA 热键绑定的按键若匹配拦截正则，不加 `~` 前缀（阻止原键传递到游戏），否则加 `~` 前缀（透传）。**down 与 Up 两个变体的 `~` 必须一致**（非拦截键注册 `~X Up`）：不带 `~` 的 Up 变体是「吞键型」，会让 AHK 把该键的 down 也一并吞掉（详见下节）；拦截键两侧都不带 `~`，由透传层补发。用户自定义游戏按键后，轮询检测到注册表变更自动重建热键，拦截列表随之更新。
 
 **热键分组**：三组热键：CombatHotkeys（常规作战）、QuickHotkeys（快捷操作）、StrongHoldHotkeys（卫戍协议）。按标签页启用对应组，组间互斥。自定义按键按「按键类型」并入既有组（global 任何标签下注册、combat/quick 并入常规组、strongHold 并入卫戍组）；「自定义按键」标签页为管理型（不切换热键组）。自定义按键**不进** `HotkeySchema.Items`（条数运行时可变），其类型 → 生效组 / 是否受守卫的映射只在 `HotkeySchema.CustomTypeProfiles` 定义。`ActionCallbacks` 数据化（`{Fn, Guarded}`）声明守卫标志，为守卫拦截键注册 Up 变体补发透传。
 
@@ -49,10 +49,11 @@
 
 - `ForwardOriginalKey()` 补发 key down 并记录 `InterceptedKeys` 标志（带 `~` 前缀的键本就透传不补发；Up 型热键只补发 key up；滚轮发完整事件）。
 - `ActionUpForward()` 为 Up 变体回调——**补发 key up**（对未按下的键是无害 no-op）：AHK Send 对物理按住的修饰键会“释放-重注入”，被拦截（无 `~`）的修饰键物理 up 也被吞。
-- **Up 变体放行依据**是 `KeyForward.DownHandled`（运行时标记，`GuardInLevel` 在主热键触发时记录，无论守卫放行/拦截）——仅 down 被 AFA 处理过才放行补发 up；游戏外主热键不触发（down 透传）则不放行，物理 up 正常透传（打字不受影响）。
+- **Up 变体放行依据**是 `KeyForward.DownHandled`（运行时标记，`GuardInLevel` 在主热键触发时记录，无论守卫放行/拦截）——仅 down 被 AFA 处理过才放行补发 up。该标记只在 `ActionUpForward()` 中清除，即只对**拦截键**闭环；非拦截键（`~` 前缀）的标记会长期留存，其 Up 变体在游戏外也算「启用」。
+- **非拦截键的 Up 变体必须带 `~`**：AHK 的防卡键分支规定——down 变体条件不成立、而同键存在**启用中的吞键 Up 变体**时，down 也会被一并吞掉（`hook.cpp` 中 `hotkey_to_fire_upon_release` 分支；Up 变体带 `~` 即 `fire_with_no_suppress`，放行 down）。若漏掉 `~`，该键在非游戏窗口会被钩子静默吞掉：AFA 侧一条日志都没有，用户看到的是「按键在其它窗口失灵」（返回值窗口恢复，因为 down 变体条件重新成立）。
 - `SuppressUp` 标志（**键级 Map**，按 pureKey 记录，非全局布尔）防 Send 注入的 up 被钩子重新捕获触发 Up 变体导致无限递归。
 - 键名规范化：`PureKeyName` 保留左右修饰键（`<SHIFT`→`lshift`、`>SHIFT`→`rshift`）且统一大小写（防 `a/A` 拼写不一致漏发 Up），`InterceptedKeys` 关闭大小写敏感。
-- `_RegisterOne()` 为守卫拦截键（非滚轮）注册 `X Up` 变体（类静态方法引用需 `.Bind(KeyForward)`），`DisableGroup()` 同规则注销。
+- `_RegisterOne()` 为所有非滚轮动作键注册 `X Up` 变体（类静态方法引用需 `.Bind(KeyForward)`）：拦截键用 `ActionUpForward` 补发 up，其余用 `_WrapUpHold` 结算按住周期，`~` 前缀与 down 变体一致；`DisableGroup()` 按注册串逐条注销。
 - 失焦边界（按住修饰键 Alt+Tab 切走再松开）已由 DownHandled 机制解决。
 - 守卫判定读 `LevelDetector.IsInLevel()`（无像素检测、无 DPI 切换）。
 - 拦截日志用 Info 级别（同一按住周期经 `InterceptedKeys` 去重，避免 key repeat 刷屏）；**滚轮无 down/up 状态不写 `InterceptedKeys`，另按 100ms 时间窗节流 `KeyForward.ShouldLogGuard()`**——无极/高分辨率滚轮每次独立滚动都走拦截路径，若逐条落盘会形成每档位一次文件 IO 的洪峰，刷爆日志轨。

@@ -205,7 +205,7 @@ class HotkeyService {
     static _WrapAction(fn) {
         Wrapped(ThisHotkey) {
             if HoldGuard.ShouldGate(KeyForward.PureKeyName(ThisHotkey))
-                && HoldGuard.TryBegin(KeyForward.PureKeyName(ThisHotkey), IsObject(fn) ? fn.Name : fn)
+                && HoldGuard.TryBegin(KeyForward.PureKeyName(ThisHotkey))
                 return
             if !GameTarget.Exists() {
                 Logger.Warn("Hotkey", "动作跳过：目标游戏窗口不存在（key=" KeyForward.PureKeyName(ThisHotkey) "）")
@@ -251,8 +251,9 @@ class HotkeyService {
             upCallback := (profile.HasOwnProp("Guarded") && intercept)
                 ? KeyForward.ActionUpForward.Bind(KeyForward)
                 : HotkeyService._WrapUpHold.Bind(HotkeyService)
-            Hotkey(hotkeyValue " Up", upCallback, "On")
-            HotkeyService.ActiveHotkeys.Set(hotkeyValue " Up", hotkeyValue " Up")
+            upReg := intercept ? hotkeyValue " Up" : "~" hotkeyValue " Up"
+            Hotkey(upReg, upCallback, "On")
+            HotkeyService.ActiveHotkeys.Set(upReg, upReg)
         }
     }
 

@@ -1,28 +1,21 @@
 ; == 按键透传（守卫拦截时还原原键输入） ==
 class KeyForward {
     static InterceptedKeys := Map()
-    ; down 已被 AFA 主热键处理过的键：Up 变体据此决定是否放行补发 key up
-    static DownHandled := Map()
-    ; 补发 up 期间的递归抑制记录
-    static SuppressUp := Map()
-    ; 守卫拦截日志节流
-    static GuardLogIntervalMs := 100
+    static DownHandled := Map()          ; down 已被 AFA 主热键处理过的键：Up 变体据此决定是否放行补发 key up
+    static SuppressUp := Map()           ; 补发 up 期间的递归抑制记录
+    static GuardLogIntervalMs := 100     ; 守卫拦截日志节流
     static _GuardLogNextTick := 0
-    ; 记录每个键上一次成功补发 up 的时刻，用于识别"同一按住周期内出现极短间隔二次补发"
     static ReentryWindowMs := 50
-    static _LastForwardTick := Map()
-    ; 每个键最近一次"真实按下"的时刻
-    static _LastForwardDownTick := Map()
-
-    ; 判定当前时刻是否应记录守卫拦截日志：窗口内最多一条，窗口自然滑动，无需主动清理状态
+    static _LastForwardTick := Map()     ; 记录每个键上一次成功补发 up 的时刻，用于识别"同一按住周期内出现极短间隔二次补发"
+    static _LastForwardDownTick := Map() ; 每个键最近一次"真实按下"的时刻
+    ; 判定当前时刻是否应记录守卫拦截日志
     static ShouldLogGuard() {
         if (A_TickCount < this._GuardLogNextTick)
             return false
         this._GuardLogNextTick := A_TickCount + this.GuardLogIntervalMs
         return true
     }
-
-    ; 提取纯键名（去除 ~*$ 前缀、修饰符与 Up 后缀；保留左右修饰键信息 <SHIFT→LShift、>SHIFT→RShift）
+    ; 提取纯键名
     static PureKeyName(ThisHotkey) {
         side := ""
         if (SubStr(ThisHotkey, 1, 1) = "<")
@@ -33,13 +26,13 @@ class KeyForward {
         pureKey := RegExReplace(pureKey, "i) Up$")
         if (pureKey == "")
             return ""
-        ; 左右前缀 + 通用修饰键名 → 对应侧规范键名（<SHIFT→LShift），否则 Send 补发不区分左右会漏释放（如 >SHIFT 卡右 Shift）
+        ; 左右前缀 + 通用修饰键名 → 对应侧规范键名
         if (side != "") {
             static ModNames := Map("shift", "Shift", "ctrl", "Ctrl", "control", "Control", "alt", "Alt", "win", "Win")
             if ModNames.Has(StrLower(pureKey))
                 pureKey := side ModNames[StrLower(pureKey)]
         }
-        ; Hotkey 名称大小写不敏感，但 Map 键默认大小写敏感；统一字母键名称，避免同一物理键因首次注册拼写不同而漏掉 Up
+        ; Hotkey 名称大小写不敏感，但 Map 键默认大小写敏感
         return StrLower(GetKeyName(pureKey))
     }
     ; 透传原热键给游戏
@@ -142,13 +135,13 @@ class KeyForward {
 }
 
 class HoldGuard {
-    static PollIntervalMs := 25            ; 兜底轮询间隔
+    static PollIntervalMs := 300           ; 兜底轮询间隔
     static HoldLogIntervalMs := 3000       ; 按住周期活跃时的节流观测
     static LateUpWindowMs := 1000          ; 兜底收尾后，抑制迟到物理 up 的时间窗
     static PollHeartbeatMs := 5000         ; 轮询心跳观测间隔（诊断用）
     static SwallowDetectDelayMs := 1000    ; 结束按住周期后仍认为按下多久即判定抬起被吞（诊断用）
 
-    static _Holds := Map()                 ; pureKey -> {tick, name}
+    static _Holds := Map()                 ; pureKey -> {tick}
     static _Tails := Map()                 ; pureKey -> 按住周期结束时执行的收尾回调
     static _PhysDown := Map()              ; pureKey -> 定时器最近一次看到的物理态
     static _ClosedTick := Map()            ; pureKey -> 最近一次由兜底路径关闭按住周期的时刻
@@ -199,12 +192,12 @@ class HoldGuard {
     }
 
     ; 动作入口调用
-    static TryBegin(pureKey, actionName := "") {
+    static TryBegin(pureKey) {
         if (pureKey = "")
             return false
         if (this._Holds.Has(pureKey))
             return true
-        this._Holds[pureKey] := {tick: A_TickCount, name: actionName}
+        this._Holds[pureKey] := {tick: A_TickCount}
         this._LastLogTick[pureKey] := A_TickCount
         if (this._ClosedCycle.Has(pureKey))
             this._ClosedCycle.Delete(pureKey)
@@ -250,23 +243,6 @@ class HoldGuard {
         closed := this._ClosedTick[pureKey]
         this._ClosedTick.Delete(pureKey)
         return (A_TickCount - closed) <= this.LateUpWindowMs
-    }
-
-    static ActiveCount() {
-        return this._Holds.Count
-    }
-
-    ; 观测用
-    static Snapshot() {
-        if (this._Holds.Count = 0)
-            return "(无)"
-        now := A_TickCount
-        parts := ""
-        for pureKey, info in this._Holds {
-            physDown := this._PhysDown.Has(pureKey) && this._PhysDown[pureKey]
-            parts .= (parts = "" ? "" : " ") pureKey "+" (now - info.tick) "ms(phys=" (physDown ? "down" : "up") ")"
-        }
-        return parts
     }
 
     static _PhysDownSnapshot() {
@@ -317,10 +293,6 @@ class HoldGuard {
             return
         }
         now := A_TickCount
-        if (now - this._LastHeartbeatTick >= this.PollHeartbeatMs) {
-            this._LastHeartbeatTick := now
-            Logger.Info("HoldGuard", "轮询心跳：tick=" this._PollTicks "，活跃按住周期=" this._Holds.Count "，物理态=" this._PhysDownSnapshot())
-        }
         for pureKey, info in this._Holds {
             isDown := false
             try {
@@ -350,6 +322,10 @@ class HoldGuard {
                 Logger.Info("HoldGuard", "按住周期：key=" pureKey " 已按住 " Round((now - info.tick) / 1000, 1)
                     . "s（物理态仍为按下；正常长按，若用户已松手则是抬起事件丢失、等待跳变自愈）")
             }
+        }
+        if (this._Holds.Count > 0 && now - this._LastHeartbeatTick >= this.PollHeartbeatMs) {
+            this._LastHeartbeatTick := now
+            Logger.Info("HoldGuard", "轮询心跳：tick=" this._PollTicks "，活跃按住周期=" this._Holds.Count "，物理态=" this._PhysDownSnapshot())
         }
         this._VerifyReleased()
     }
