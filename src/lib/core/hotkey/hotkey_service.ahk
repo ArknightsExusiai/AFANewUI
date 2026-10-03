@@ -114,7 +114,7 @@ class HotkeyService {
 
     ; 处理 UI 标签页切换请求
     static _HandleActiveTabChangeRequested(data) {
-        if (data.tabName = "other" || data.tabName = "customKeys")
+        if (data.tabName = "other" || data.tabName = "customKeys" || data.tabName = "specialOps")
             return
         this._ActiveTab := data.tabName
         if (this._ActiveTab = "strongHoldProtocol")
