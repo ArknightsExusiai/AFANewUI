@@ -23,7 +23,7 @@
 
 | 项 | 职责 |
 |---|---|
-| `HoldGuard.TryBegin(pureKey, actionName)` | 动作入口调用。返回 true = 该键仍在上一个按住周期内，本次 down（键盘自动重复）应忽略；返回 false = 新按住周期，调用方继续执行动作 |
+| `HoldGuard.TryBegin(pureKey)` | 动作入口调用。返回 true = 该键仍在上一个按住周期内，本次 down（键盘自动重复）应忽略；返回 false = 新按住周期，调用方继续执行动作 |
 | `HoldGuard.RegisterTail(pureKey, fn)` | 注册「按住周期结束时的收尾回调」。带松开尾部的动作（如模拟左键点击的 `{LButton Up}`）用它替代原来挂在 `PureKeyWait` 之后的尾部 |
 | `HoldGuard.EndHoldMs(pureKey)` | 物理抬起时由 `X Up` 变体调用：结束按住周期 + 执行尾部。**这是正常路径，毫秒级，不经过定时器** |
 | `HoldGuard._Poll()` | 兜底定时器回调：①物理态校验 ②物理态跳变自愈 ③执行因兜底而触发的尾部 |
@@ -48,7 +48,7 @@
 
 | 字段 | 语义 |
 |---|---|
-| `_Holds` (Map, CaseSense=false) | `pureKey → {tick, name}`，`tick` 是本按住周期的**进入时刻**（也是「按住时长」日志的唯一来源） |
+| `_Holds` (Map, CaseSense=false) | `pureKey → {tick}`，`tick` 是本按住周期的**进入时刻**（也是「按住时长」日志的唯一来源） |
 | `_Tails` (Map) | `pureKey → fn`，按住周期结束时执行的收尾回调 |
 | `_PhysDown` (Map) | `pureKey → true/false`，定时器最近一次看到的物理态，用于跳变检测 |
 | `_ClosedTick` (Map) | `pureKey → tick`，最近一次**由兜底路径**关闭按住周期的时刻，用于抑制迟到到达的物理 up（见 2.5） |

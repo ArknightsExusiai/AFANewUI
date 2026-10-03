@@ -141,7 +141,7 @@ class HoldGuard {
     static PollHeartbeatMs := 5000         ; 轮询心跳观测间隔（诊断用）
     static SwallowDetectDelayMs := 1000    ; 结束按住周期后仍认为按下多久即判定抬起被吞（诊断用）
 
-    static _Holds := Map()                 ; pureKey -> {tick, name}
+    static _Holds := Map()                 ; pureKey -> {tick}
     static _Tails := Map()                 ; pureKey -> 按住周期结束时执行的收尾回调
     static _PhysDown := Map()              ; pureKey -> 定时器最近一次看到的物理态
     static _ClosedTick := Map()            ; pureKey -> 最近一次由兜底路径关闭按住周期的时刻
@@ -192,12 +192,12 @@ class HoldGuard {
     }
 
     ; 动作入口调用
-    static TryBegin(pureKey, actionName := "") {
+    static TryBegin(pureKey) {
         if (pureKey = "")
             return false
         if (this._Holds.Has(pureKey))
             return true
-        this._Holds[pureKey] := {tick: A_TickCount, name: actionName}
+        this._Holds[pureKey] := {tick: A_TickCount}
         this._LastLogTick[pureKey] := A_TickCount
         if (this._ClosedCycle.Has(pureKey))
             this._ClosedCycle.Delete(pureKey)
@@ -243,23 +243,6 @@ class HoldGuard {
         closed := this._ClosedTick[pureKey]
         this._ClosedTick.Delete(pureKey)
         return (A_TickCount - closed) <= this.LateUpWindowMs
-    }
-
-    static ActiveCount() {
-        return this._Holds.Count
-    }
-
-    ; 观测用
-    static Snapshot() {
-        if (this._Holds.Count = 0)
-            return "(无)"
-        now := A_TickCount
-        parts := ""
-        for pureKey, info in this._Holds {
-            physDown := this._PhysDown.Has(pureKey) && this._PhysDown[pureKey]
-            parts .= (parts = "" ? "" : " ") pureKey "+" (now - info.tick) "ms(phys=" (physDown ? "down" : "up") ")"
-        }
-        return parts
     }
 
     static _PhysDownSnapshot() {
