@@ -310,10 +310,6 @@ class HoldGuard {
             return
         }
         now := A_TickCount
-        if (now - this._LastHeartbeatTick >= this.PollHeartbeatMs) {
-            this._LastHeartbeatTick := now
-            Logger.Info("HoldGuard", "轮询心跳：tick=" this._PollTicks "，活跃按住周期=" this._Holds.Count "，物理态=" this._PhysDownSnapshot())
-        }
         for pureKey, info in this._Holds {
             isDown := false
             try {
@@ -343,6 +339,10 @@ class HoldGuard {
                 Logger.Info("HoldGuard", "按住周期：key=" pureKey " 已按住 " Round((now - info.tick) / 1000, 1)
                     . "s（物理态仍为按下；正常长按，若用户已松手则是抬起事件丢失、等待跳变自愈）")
             }
+        }
+        if (this._Holds.Count > 0 && now - this._LastHeartbeatTick >= this.PollHeartbeatMs) {
+            this._LastHeartbeatTick := now
+            Logger.Info("HoldGuard", "轮询心跳：tick=" this._PollTicks "，活跃按住周期=" this._Holds.Count "，物理态=" this._PhysDownSnapshot())
         }
         this._VerifyReleased()
     }
