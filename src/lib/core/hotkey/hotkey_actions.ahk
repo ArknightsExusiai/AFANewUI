@@ -135,7 +135,7 @@ class KeyForward {
 }
 
 class HoldGuard {
-    static PollIntervalMs := 25            ; 兜底轮询间隔
+    static PollIntervalMs := 300           ; 兜底轮询间隔
     static HoldLogIntervalMs := 3000       ; 按住周期活跃时的节流观测
     static LateUpWindowMs := 1000          ; 兜底收尾后，抑制迟到物理 up 的时间窗
     static PollHeartbeatMs := 5000         ; 轮询心跳观测间隔（诊断用）
