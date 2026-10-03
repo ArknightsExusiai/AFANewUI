@@ -102,8 +102,7 @@ class HookMonitor {
     static _Suspect(pureKey) {
         this._Streak := 0
         cooling := A_TickCount - this._LastRecoverTick < this.RecoverCooldownMs
-        Logger.Warn("HookMonitor", "键盘钩子疑似被系统摘除：键=" pureKey "，物理按下但 idleKbd=" A_TimeIdleKeyboard "ms"
-            . (cooling ? "（冷却中，仅记录）" : "，重装钩子"))
+        Logger.Warn("HookMonitor", "键盘钩子疑似被系统摘除：键=" pureKey "，物理按下但 idleKbd=" A_TimeIdleKeyboard "ms" . (cooling ? "（冷却中，仅记录）" : "，重装钩子"))
         if (cooling)
             return
         this._LastRecoverTick := A_TickCount
