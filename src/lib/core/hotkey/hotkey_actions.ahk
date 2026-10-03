@@ -1,13 +1,13 @@
 ; == 按键透传（守卫拦截时还原原键输入） ==
 class KeyForward {
-    static InterceptedKeys := Map()     ; down 已被 AFA 主热键处理过的键：Up 变体据此决定是否放行补发 key up
-    static DownHandled := Map()         ; 补发 up 期间的递归抑制记录
-    static SuppressUp := Map()          ; 守卫拦截日志节流
-    static GuardLogIntervalMs := 100
-    static _GuardLogNextTick := 0       ; 记录每个键上一次成功补发 up 的时刻，用于识别"同一按住周期内出现极短间隔二次补发"
+    static InterceptedKeys := Map()
+    static DownHandled := Map()          ; down 已被 AFA 主热键处理过的键：Up 变体据此决定是否放行补发 key up
+    static SuppressUp := Map()           ; 补发 up 期间的递归抑制记录
+    static GuardLogIntervalMs := 100     ; 守卫拦截日志节流
+    static _GuardLogNextTick := 0
     static ReentryWindowMs := 50
-    static _LastForwardTick := Map()    ; 每个键最近一次"真实按下"的时刻
-    static _LastForwardDownTick := Map()
+    static _LastForwardTick := Map()     ; 记录每个键上一次成功补发 up 的时刻，用于识别"同一按住周期内出现极短间隔二次补发"
+    static _LastForwardDownTick := Map() ; 每个键最近一次"真实按下"的时刻
     ; 判定当前时刻是否应记录守卫拦截日志
     static ShouldLogGuard() {
         if (A_TickCount < this._GuardLogNextTick)
