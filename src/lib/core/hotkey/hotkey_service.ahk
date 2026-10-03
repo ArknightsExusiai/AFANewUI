@@ -251,8 +251,9 @@ class HotkeyService {
             upCallback := (profile.HasOwnProp("Guarded") && intercept)
                 ? KeyForward.ActionUpForward.Bind(KeyForward)
                 : HotkeyService._WrapUpHold.Bind(HotkeyService)
-            Hotkey(hotkeyValue " Up", upCallback, "On")
-            HotkeyService.ActiveHotkeys.Set(hotkeyValue " Up", hotkeyValue " Up")
+            upReg := intercept ? hotkeyValue " Up" : "~" hotkeyValue " Up"
+            Hotkey(upReg, upCallback, "On")
+            HotkeyService.ActiveHotkeys.Set(upReg, upReg)
         }
     }
 

@@ -61,6 +61,7 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 | [帧开头轮询推论](docs/design/key_designs_hotkey.md#明日方舟-pc-端按键识别帧开头状态轮询) | 游戏每帧开头轮询一次按键。AFA 注入某键 down 后、游戏下一帧轮询前，**不允许任何同键 up 到达游戏**（含透传补发），否则本次按下整次丢失 |
 | [递归抑制须键级作用域](docs/design/key_designs_hotkey.md#send-注入会触发热键) | 回调内 Send 同键必须加防递归标志，且用 `Map(pureKey→true)` 而非全局布尔（全局布尔会让第二个键的物理 up 被误挡→卡键） |
 | [`InjectedPressKeys` 抑制补发](docs/design/key_designs_hotkey.md#注入按下状态标记-gamekeysinjectedpresskeys) | 注入动作自管该键完整按下（down→up），`ActionUpForward` 见标记即抑制补发 up |
+| [Up 变体的 `~` 须与 down 同形](docs/design/key_designs_hotkey.md#常规作战关卡守卫与按键透传) | `_RegisterOne` 给非拦截键注册 `~X`，其 `X Up` 也必须带 `~`：吞键型 Up 会让 AHK 连该键的 down 一起吞掉（防卡键规则），表现为该键在非游戏窗口彻底失灵且**零日志** |
 | [中断保护二选一](docs/design/key_designs_hotkey.md#线程抢占风险已修复) | 互斥语义不可混用：**只有过帧三件套用 `Critical`**（帧数精确性依赖完全不可中断）；需"防定时器抖动但放行其他热键"用 `Thread "NoTimers"` |
 | [勿恢复热键洪峰告警](docs/design/key_designs_hotkey.md#热键频率阈值) | `A_HotkeyInterval := 0` 是**永久关闭**该告警（不是调高上限），代价已接受——不得擅自恢复 |
 | [勿硬编码游戏窗口判定](docs/design/key_designs_hotkey.md#多区服与热路径预算) | 禁止在热键/监控路径直接写 `"ahk_exe Arknights.exe"`，宽松回退集中在 `GameTarget`；热键路径只允许 O(1) 查表 + 最多 2 次轻量 Win32 调用 |
