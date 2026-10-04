@@ -116,6 +116,7 @@ INI 格式，三个 Section：`[Hotkeys]`、`[Main]`、`[Custom]`。`GitHubToken
 - **多路径必须在同一个 `Select` 内用 `or` 连接**，保持 `Triggers.Count == 1`（多 trigger 语义不同）。
 - **仅错误 1450（`ERROR_NO_SYSTEM_RESOURCES`）做 250/750ms 两次退避重试**；审核在短事务内完成并在 `finally` 恢复令牌权限原状态。
 - **`Disable()` 只删计划任务，不关审核**（有意保留）；任务按 SID 独立命名；主体用 SAM 兼容账户名（SID 仅用于事件过滤与任务隔离），注册用 `6=TASK_CREATE_OR_UPDATE` + `3=TASK_LOGON_INTERACTIVE_TOKEN` 且**不传用户名密码**。任务语义一致时不重写。
+- **校准比较主体时以任务 XML（`Definition.XmlText`）中 `<UserId>` 的 SID 为准**：COM `Principal.UserId` 读回的是不带计算机名的裸用户名，用户名与计算机名相同时 `LookupAccountNameW` 会把它解析成机器域 SID（`SidTypeDomain`），导致每次启动都误报 `principal_user` 漂移并重写任务。XML 取不到 SID 时才回退到按账户名解析，回退路径对裸用户名先查 `计算机名\用户名`、查不到再查原名（兼容域账户），两次都只接受 `SidTypeUser`。
 
 ## cmd `chcp 65001` 批处理陷阱
 
