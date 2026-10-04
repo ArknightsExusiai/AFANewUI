@@ -1,15 +1,9 @@
 ; == 热键 Schema（元数据唯一来源） ==
-; 本文件只承载热键元数据与读取 API，不引用任何 core/ui 函数。
-; 由 Constants.KeyNames / 分组 Map / Config._DefaultHotkeys / HotkeyService.ActionCallbacks /
-; GuiManager 热键行共同消费，避免平行维护多份热键元数据。
-; descKey 为悬停说明（StatusBarHints 使用）：中文原文，显示时经 I18n.T；
-; 可含 {1} 占位符（如过帧档位），由 Register 时传入的参数提供回调求值（见 gui.ahk AddBindRow）。
+; 被 Constants / Config / HotkeyService / GUI 共同消费；不引用任何 core/ui 函数。
 
 class HotkeySchema {
-    ; id / nameKey / group / defaultKey 为必填；
-    ; descKey 为状态栏悬停功能说明（中文原文，可空字符串表示无说明）；
-    ; guarded / onUp / noActivate 为热键行为元数据（供 HotkeyService 生成回调 profile）。
-    ; 顺序即 GUI 显示顺序：常规作战左列→右列，快捷操作左列→右列，卫戍协议左列→右列。
+    ; id/nameKey/group/defaultKey 必填；descKey 为状态栏悬停说明（中文原文，可含 {1} 占位符）；
+    ; guarded/onUp/noActivate 为热键行为元数据；数组顺序即 GUI 显示顺序。
     static Items := [
         ; ---- 常规作战 ----
         {id: "PressPause", nameKey: "按下时暂停", descKey: "按下时切换暂停", group: "combat", defaultKey: "f", guarded: true, onUp: false, noActivate: false},
@@ -28,6 +22,7 @@ class HotkeySchema {
         {id: "PauseRetreat", nameKey: "暂停撤退", descKey: "暂停时，鼠标移动到想要撤退的单位上，按下后自动选中并撤退", group: "combat", defaultKey: "XButton1", guarded: true, onUp: false, noActivate: false},
         {id: "AutoBeginPauseSwitch", nameKey: "开局自动暂停开关", descKey: "切换「开局自动暂停」的开关", group: "combat", defaultKey: "", guarded: false, onUp: false, noActivate: true},
         {id: "AutoBeginSpeedSwitch", nameKey: "开局自动二倍速开关", descKey: "切换「开局自动二倍速」的开关", group: "combat", defaultKey: "", guarded: false, onUp: false, noActivate: true},
+        {id: "AutoBeginPauseHold", nameKey: "按住开局暂停", descKey: "关卡加载时按住，直到进入关卡后自动暂停（不受「启用开局自动暂停」开或关的影响）", group: "combat", defaultKey: "", guarded: false, onUp: false, noActivate: true},
         ; ---- 快捷操作 ----
         {id: "LButtonClick", nameKey: "模拟左键点击", descKey: "模拟按下鼠标左键", group: "quick", defaultKey: "", guarded: false, onUp: false, noActivate: false},
         {id: "Harvest", nameKey: "基建快速收取", descKey: "点击屏幕左下角的基建收取按钮收取产物", group: "quick", defaultKey: "", guarded: false, onUp: false, noActivate: false},
@@ -51,7 +46,7 @@ class HotkeySchema {
         {id: "StrongHoldProtocolBack", nameKey: "返回上级菜单", descKey: "模拟点击ESC键，返回上一级菜单", group: "strongHold", defaultKey: "", guarded: false, onUp: false, noActivate: false}
     ]
 
-    ; 获取热键的 id -> nameKey 映射（等价 Constants.KeyNames）
+    ; id -> nameKey
     static GetKeyNames() {
         result := Map()
         for item in this.Items {
@@ -60,7 +55,7 @@ class HotkeySchema {
         return result
     }
 
-    ; 获取指定分组的 id -> true 映射（等价 Constants.Combat/Quick/StrongHoldHotkeys）
+    ; 指定分组的 id -> true 映射
     static GetGroupMap(group) {
         result := Map()
         for item in this.Items {
@@ -70,7 +65,7 @@ class HotkeySchema {
         return result
     }
 
-    ; 获取热键的 id -> defaultKey 映射（等价 Config._DefaultHotkeys）
+    ; id -> defaultKey
     static GetDefaultHotkeys() {
         result := Map()
         for item in this.Items {
@@ -79,7 +74,7 @@ class HotkeySchema {
         return result
     }
 
-    ; 按 id 获取 schema 条目；不存在返回 ""
+    ; 按 id 获取 schema 条目
     static GetItem(id) {
         for item in this.Items {
             if (item.id = id)
@@ -88,10 +83,7 @@ class HotkeySchema {
         return ""
     }
 
-    ; 自定义按键"类型"的行为元数据（仅此一处定义）：生效组与是否受关卡守卫。
-    ; 生效组语义：all=任何标签页下都注册；combatQuick=常规/快捷标签下注册；
-    ; strongHoldProtocol=卫戍协议标签下注册。动态条目的 id/名称/绑定/脚本是配置数据（Config 持有），
-    ; 因此自定义按键不进入 Items（有意豁免：条目数量运行时可变）。
+    ; 自定义按键「类型」行为元数据（仅此一处定义）：生效组与是否受关卡守卫
     static CustomTypeProfiles := Map(
         "global",     {Group: "all",                Guarded: false},
         "combat",     {Group: "combatQuick",        Guarded: true},

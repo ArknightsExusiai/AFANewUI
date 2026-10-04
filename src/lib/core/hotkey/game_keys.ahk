@@ -1,12 +1,9 @@
 ; == 游戏按键注册表识别（多区服） ==
-; 从各服注册表读取明日方舟游戏内按键设置，动态适配用户自定义按键。
-; 每个区服维护独立映射；热键路径按前台区服取映射；拦截正则取所有已安装区服的并集。
 
 class GameKeys {
 
     ; ── 公开 API ──
 
-    ; 初始化：首次读取所有已知区服 + 启动 10s 轮询
     static Init() {
         if (this._HasInitialized)
             return
@@ -15,7 +12,6 @@ class GameKeys {
         this._InitUnityKeyMap()
         this._InitDefaults()
 
-        ; 首次读取全部已知区服
         for serverId in ServerProfile.Ids() {
             result := this._ReadServer(serverId)
             if (result.success) {
@@ -26,14 +22,12 @@ class GameKeys {
             } else {
                 this._ServerReadSuccess[serverId] := false
                 if (result.rootExists) {
-                    ; 注册表根存在但读取失败：按该服默认值兜底，并只提示一次
                     this._ServerBindings[serverId] := this._MergeDefaults(Map())
                     this._ShowWarning(serverId)
                 }
             }
         }
 
-        ; 兼容旧字段：默认指向 CN（或 PreferredServer）
         this._Bindings := this._GetBindingsForServer(this._ResolveServerId())
 
         EventBus.Subscribe("ForegroundClientChanged", (data) => this._HandleForegroundClientChanged(data))
@@ -41,7 +35,7 @@ class GameKeys {
         SetTimer ObjBindMethod(GameKeys, "_OnPoll"), 10000
     }
 
-    ; 获取某功能的 AHK 键名（按前台区服解析）
+    ; 获取某功能的 AHK 键名
     static Get(gameFunc) {
         serverId := this._ResolveServerId()
         bindings := this._GetBindingsForServer(serverId)
@@ -52,50 +46,38 @@ class GameKeys {
         return ""
     }
 
-    ; ── 注入按下状态标记（与 KeyForward 透传协作） ──
-    ; 记录“该键的注入 key down 已发送、对应注入 key up 尚未发送”（值 = 发送时刻 A_TickCount）。
-    ; 用途：物理松开触发 Up 变体回调（KeyForward.ActionUpForward）时据此抑制补发——
-    ; 游戏每帧开头才轮询一次按键状态，若补发 up 与注入 down 落在同一画面帧内，下一帧轮询读到的是 up，
-    ; 该次注入的按下会被整次丢失（场景：游戏内技能键=AFA 一键技能键，同帧注入 down 与物理松开补发 up 碰撞）。
-    ; 仅当动作自管该键的完整按下（注入 down→up）时标记才生效；未注入的键（如 SwitchView 场景）无标记，
-    ; Up 变体照常补发，不影响失焦/拖出卡键修复。
+    ; ── 注入按下状态标记 ──
     static InjectedPressKeys := Map()
 
-    ; 内部：规范键名（与 KeyForward.PureKeyName 同语义：StrLower(GetKeyName(...))），保证与回调侧 pureKey 对表一致
+    ; 内部：规范键名（与 KeyForward.PureKeyName 同语义）
     static _NormalizeKey(key) {
         if (key == "")
             return ""
         return StrLower(GetKeyName(key))
     }
 
-    ; 标记该键的注入按下开始（SendDown 以及动作中直接 Send 注入键的场景共用）
+    ; 标记该键的注入按下开始
     static MarkInjectedPress(key) {
         normalized := this._NormalizeKey(key)
         if (normalized != "")
             this.InjectedPressKeys[normalized] := A_TickCount
     }
 
-    ; 标记该键的注入按下已结束（SendUp 发送前调用）
-    ; 顺序必须为“先清标记再发送”：注入 up 自身若被钩子捕获触发 Up 变体（SendEvent 降级路径），
-    ; 此时标记已清除故仍会补发，否则该注入 up 被吞且被抑制 → 游戏内该键卡在按下状态。
+    ; 标记该键的注入按下已结束（须先清标记再发送 up）
     static UnmarkInjectedPress(key) {
         normalized := this._NormalizeKey(key)
         if (normalized != "" && this.InjectedPressKeys.Has(normalized))
             this.InjectedPressKeys.Delete(normalized)
     }
 
-    ; 查询：该键是否处于“注入按下未完成”窗口内（键名须已规范化）。
-    ; TTL 1 秒：注入 down→up 间隔正常情况下为数帧+50ms（帧时长与帧率设置绑定且掉帧会变长，仍远小于 1 秒），
-    ; 动作异常中断（Send 抛错未走到 SendUp）留下的陈旧标记自动过期，避免误抑制后续透传导致卡键。
+    ; 该键是否处于「注入按下未完成」窗口内（TTL 1 秒）
     static IsInjectedPressPending(pureKey) {
         if (!this.InjectedPressKeys.Has(pureKey))
             return false
         return A_TickCount - this.InjectedPressKeys[pureKey] <= 1000
     }
 
-    ; 发送按键按下（注入一律用 {Blind}：默认 Send 会为小写字母临时改写 CapsLock（SetStoreCapsLockMode
-    ; 默认开启）并释放-重注入物理按住的修饰键，导致大写锁定/按住 Shift 时注入的事件按“小写/无修饰”翻译，
-    ; 与用户物理状态不符；Blind 保持 CapsLock 与修饰键当前状态不变，注入即物理状态的忠实镜像）
+    ; 发送按键按下
     static SendDown(gameFunc) {
         key := this.Get(gameFunc)
         if (key != "") {
@@ -104,7 +86,7 @@ class GameKeys {
         }
     }
 
-    ; 发送按键释放（先清注入标记再发送，理由见 UnmarkInjectedPress 注释）
+    ; 发送按键释放（先清注入标记再发送）
     static SendUp(gameFunc) {
         key := this.Get(gameFunc)
         if (key != "") {
@@ -113,15 +95,14 @@ class GameKeys {
         }
     }
 
-    ; 发送完整点击（Down → 延迟 → Up），仅用于单键场景；复用 SendDown/SendUp 以保证注入标记与 {Blind} 语义一致
+    ; 发送完整点击（Down → 延迟 → Up）
     static Tap(gameFunc, delay := 50) {
         this.SendDown(gameFunc)
         USleep(delay)
         this.SendUp(gameFunc)
     }
 
-    ; 返回拦截正则字符串，供 hotkey_service.ahk 使用。
-    ; 只纳入“注册表存在的服”的实际绑定 ∪ 各服缺失功能组默认值；未安装的服不纳入。
+    ; 返回热键拦截正则（已安装区服的实际绑定 ∪ 各服缺失功能组默认值）
     static GetInterceptPattern() {
         keys := ""
         seen := Map()
@@ -140,7 +121,6 @@ class GameKeys {
             }
         }
 
-        ; 没有任何区服注册表可读时回退 CN 默认，保持旧版行为不回归
         if (!addedAny) {
             bindings := this._MergeDefaults(Map())
             for _, key in bindings {
@@ -151,27 +131,25 @@ class GameKeys {
             }
         }
 
-        ; 追加不可重新绑定的游戏键和鼠标键
         keys .= "Escape|RButton|MButton"
         return "i)\b(" keys ")\b$"
     }
 
     ; ── 内部状态 ──
-    static _Bindings := Map()        ; 兼容旧字段：当前前台/首选服的映射
+    static _Bindings := Map()        ; 当前前台/首选服的映射
     static _ServerBindings := Map()  ; serverId → gameFunc → AHK 键名
     static _ServerLastHex := Map()   ; serverId → 上次原始 hex
     static _ServerReadSuccess := Map() ; serverId → bool
-    static _ServerWarned := Map()    ; serverId → bool（每服每会话只提示一次）
-    static _PendingWarningServers := [] ; 待汇总的读取失败区服
-    static _WarningScheduled := false   ; 是否已安排汇总弹窗定时器
+    static _ServerWarned := Map()    ; serverId → bool（每会话只提示一次）
+    static _PendingWarningServers := []
+    static _WarningScheduled := false
     static _Defaults := Map()        ; 硬编码默认映射
     static _UnityKeyMap := Map()     ; Unity keyId → AHK 键名
     static _HasInitialized := false
 
     ; ── 区服解析 ──
 
-    ; 解析当前应使用的区服：优先前台客户端，其次 PreferredServer，
-    ; 再其次上次成功识别的 LastActiveServer，最后 CN。
+    ; 解析当前应使用的区服（前台客户端 → PreferredServer → LastActiveServer → CN）
     static _ResolveServerId() {
         serverId := GameClientRegistry.GetForegroundServerId()
         if (serverId != "" && this._ServerBindings.Has(serverId))
@@ -197,13 +175,13 @@ class GameKeys {
         return this._MergeDefaults(Map())
     }
 
-    ; 前台客户端变化时更新 LastActiveServer（仅内存，避免热路径写 IO）
+    ; 前台客户端变化时更新 LastActiveServer（仅内存）
     static _HandleForegroundClientChanged(data) {
         if (data.serverId != "" && this._ServerBindings.Has(data.serverId)) {
             this._Bindings := this._GetBindingsForServer(data.serverId)
             if (Config.AllImportant.Has("LastActiveServer"))
                 Config.SetImportant("LastActiveServer", data.serverId)
-            Logger.Debug("GameKeys", "前台区服切换：" data.serverId)
+            Logger.Info("GameKeys", "前台区服切换：" data.serverId)
         }
     }
 
@@ -224,7 +202,7 @@ class GameKeys {
             "num4", "4", "num5", "5", "num6", "6", "num7", "7",
             "num8", "8", "num9", "9",
 
-            ; === 也兼容 alpha0 - alpha9（旧版/标准 Unity KeyCode） ===
+            ; === 也兼容 alpha0 - alpha9（标准 Unity KeyCode） ===
             "alpha0", "0", "alpha1", "1", "alpha2", "2", "alpha3", "3",
             "alpha4", "4", "alpha5", "5", "alpha6", "6", "alpha7", "7",
             "alpha8", "8", "alpha9", "9",
@@ -394,7 +372,6 @@ class GameKeys {
         if (root = "")
             return result
 
-        ; 先确认注册表根真实存在，避免未安装区服（如 KR/EN）也被当成“读取失败”反复弹窗
         if !ServerProfile.RegistryRootExists(serverId)
             return result
         result.rootExists := true
@@ -408,11 +385,10 @@ class GameKeys {
                 }
             }
         } catch Error as loopErr {
-            Logger.Debug("GameKeys", "区服 " serverId " 注册表枚举异常：" loopErr.Message)
+            Logger.Warn("GameKeys", "区服 " serverId " 注册表枚举异常：" loopErr.Message)
             return result
         }
 
-        ; 如果枚举没找到，尝试已知键名
         if (targetValueName = "") {
             knownKeys := ["KEYBOARD_SETTING_V2_h476498874", "KEYBOARD_SETTING_DISPLAY_h1323456836"]
             for keyName in knownKeys {
@@ -429,7 +405,7 @@ class GameKeys {
         }
 
         if (targetValueName = "") {
-            Logger.Debug("GameKeys", "区服 " serverId " 未找到 KEYBOARD_SETTING_V* 键值")
+            Logger.Warn("GameKeys", "区服 " serverId " 未找到 KEYBOARD_SETTING_V* 键值")
             return result
         }
 
@@ -465,7 +441,7 @@ class GameKeys {
         }
     }
 
-    ; 合并默认值：注册表缺失的功能组/键全部用默认值补齐
+    ; 合并默认值
     static _MergeDefaults(bindings) {
         result := Map()
         for funcName, key in bindings
@@ -543,7 +519,7 @@ class GameKeys {
         return ""
     }
 
-    ; ── 定时器回调：检测各服注册表变更 ──
+    ; ── 定时器回调 ──
     static _OnPoll() {
         try {
             changed := false
@@ -600,7 +576,7 @@ class GameKeys {
         }
     }
 
-    ; ── 输出完整按键映射（Info）──
+    ; ── 输出完整按键映射 ──
     static _LogBindings(serverId) {
         bindings := this._GetBindingsForServer(serverId)
         mapText := ""
@@ -609,7 +585,7 @@ class GameKeys {
         Logger.Info("GameKeys", "区服 " serverId " 完整按键映射：" mapText)
     }
 
-    ; ── 弹出读取失败警告（每服每会话只提示一次，多个区服合并为一个弹窗）──
+    ; ── 读取失败警告（每服每会话只提示一次）──
     static _ShowWarning(serverId) {
         if (this._ServerWarned.Has(serverId) && this._ServerWarned[serverId])
             return
@@ -619,12 +595,11 @@ class GameKeys {
         this._PendingWarningServers.Push(serverId)
         if (!this._WarningScheduled) {
             this._WarningScheduled := true
-            ; 延迟到启动流程基本完成后弹出，避免在 GuiManager 建控件期间被定时器打断导致 MessageBox 控件销毁。
             SetTimer ObjBindMethod(GameKeys, "_FlushWarnings"), -3000
         }
     }
 
-    ; 汇总所有读取失败区服后只弹一次窗，避免多个 MessageBox 互相覆盖
+    ; 汇总所有读取失败区服后只弹一次窗
     static _FlushWarnings() {
         this._WarningScheduled := false
         if (this._PendingWarningServers.Length = 0)

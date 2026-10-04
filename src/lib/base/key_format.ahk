@@ -1,5 +1,5 @@
 ; == 热键键值格式化工具 ==
-; base 层热键键值格式化工具，供 UI 与 core 共用。
+; base 层热键键值格式化工具，供 UI 与 core 共用
 
 class KeyFormat {
     ; 格式化显示键值
@@ -21,7 +21,7 @@ class KeyFormat {
         mainkey := ""
 
         ; 先从 AHK 内部格式中移除带侧别和通用修饰符，避免把 +c 直接替换成
-        ; SHIFTC 而丢失显示分隔符。命名键（如 CtrlBreak）不含符号，不会被误拆。
+        ; SHIFTC 而丢失显示分隔符。命名键（如 CtrlBreak）不含符号，不会被误拆
         if InStr(value, "<^")
             hasLCTRL := true, value := StrReplace(value, "<^", "")
         if InStr(value, ">^")
@@ -41,7 +41,7 @@ class KeyFormat {
         if InStr(value, "!")
             hasALT := true, value := StrReplace(value, "!", "")
 
-        ; 修饰键单独绑定时使用 <SHIFT/>SHIFT 等长名称，转成显示侧别后复用下方识别。
+        ; 修饰键单独绑定时使用 <SHIFT/>SHIFT 等长名称，转成显示侧别后复用下方识别
         value := RegExReplace(value, "<", "L")
         value := RegExReplace(value, ">", "R")
 
