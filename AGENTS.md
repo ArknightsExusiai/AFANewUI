@@ -61,6 +61,7 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 | [帧开头轮询推论](docs/design/key_designs_hotkey.md#明日方舟-pc-端按键识别帧开头状态轮询) | 游戏每帧开头轮询一次按键。AFA 注入某键 down 后、游戏下一帧轮询前，**不允许任何同键 up 到达游戏**（含透传补发），否则本次按下整次丢失 |
 | [递归抑制须键级作用域](docs/design/key_designs_hotkey.md#send-注入会触发热键) | 回调内 Send 同键必须加防递归标志，且用 `Map(pureKey→true)` 而非全局布尔（全局布尔会让第二个键的物理 up 被误挡→卡键） |
 | [`InjectedPressKeys` 抑制补发](docs/design/key_designs_hotkey.md#注入按下状态标记-gamekeysinjectedpresskeys) | 注入动作自管该键完整按下（down→up），`ActionUpForward` 见标记即抑制补发 up |
+| [按住型热键用 `HoldGuard` 收尾](docs/design/hold_guard.md#2-新模型按住去重状态机) | 动作入口靠 `HoldGuard.TryBegin` 去键盘自动重复（一个按住周期只执行一次），松开靠 `RegisterTail` 注册收尾回调；按住型动作还须兜住「按下与松开几乎同时到达、收尾回调来不及注册」——用 `HoldGuard.IsHolding()` 自检并取消，否则该状态永久驻留 |
 | [Up 变体的 `~` 须与 down 同形](docs/design/key_designs_hotkey.md#常规作战关卡守卫与按键透传) | `_RegisterOne` 给非拦截键注册 `~X`，其 `X Up` 也必须带 `~`：吞键型 Up 会让 AHK 连该键的 down 一起吞掉（防卡键规则），表现为该键在非游戏窗口彻底失灵且**零日志** |
 | [中断保护二选一](docs/design/key_designs_hotkey.md#线程抢占风险已修复) | 互斥语义不可混用：**只有过帧三件套用 `Critical`**（帧数精确性依赖完全不可中断）；需"防定时器抖动但放行其他热键"用 `Thread "NoTimers"` |
 | [勿恢复热键洪峰告警](docs/design/key_designs_hotkey.md#热键频率阈值) | `A_HotkeyInterval := 0` 是**永久关闭**该告警（不是调高上限），代价已接受——不得擅自恢复 |
@@ -73,6 +74,7 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 | 约束 | 说明 |
 |------|------|
 | [配置写入只经 `SettingsService`](docs/design/key_designs_base.md#config-读写分离与工作副本) | 运行时读配置用 `Read*FromIni()`（不碰内存工作副本），GUI 显示用 `Get*()` 工作副本；`Set*()` 仅写内存 |
+| [持久化变更须同步 GUI 快照](docs/design/key_designs_ui.md#脏状态与窗口重建) | 经 `SettingsService.UpdatePersistedValue` 发出的 `SettingsChanged` 一律表示该值已落盘：接收方写回控件后必须把 `_InitialValues[key]` 前移（`_SyncInitialValue`），否则用户随后**第一次**手动改回旧值会被判为「未修改」，保存/应用不亮 |
 | [新增热键/配置项四处同步](docs/design/key_designs_base.md#constants-类) | `HotkeySchema.Items`（带 `nameKey`）、`Constants.CustomNames`、`Config._DefaultCustom`、四张 locale 表；漏了会导致设置无法保存 |
 | [主题规范化单一入口](docs/design/key_designs_ui.md#主题生命周期与预览) | 合法值集合与规则只在 `Constants.NormalizeThemeMode`/`Constants.ThemeModes`，勿在别处再写一份 switch |
 | [文案键 = 中文原文](docs/design/i18n.md) | 新增用户可见文案即以中文原文为键，同步 zh-Hant / ja-JP / ko-KR / en-US 四表；日志/调试/内部异常**保持中文不译** |

@@ -10,9 +10,10 @@
 
 - **列栅格**：绑定的 Edit 固定在 `colX+155`（左列 155 / 右列 `ColWidth`+155 = 515），标签右缘固定 `colX+135` 右对齐、宽出向左延伸。
 - **帧率行**标签按**实测宽度**重定宽（`Max(90, 实测宽)` 且 `+2px` 安全余量），右缘仍固定 135——en/ko 等长文案不换行。
-- **自动暂停开关**的按键 Edit 对齐右列（`x515 w140`），复选框贴其左侧（右缘 500）。
-- **关卡守卫开关**左缘对齐"开局自动暂停"复选框，并用 `Min(cbPauseX, 708 - 实测宽)` 钳制，防超长文案越出右缘。
-- **二倍速开关**放在守卫行左列：**Edit 必须先于复选框创建**——本行最后一个控件必须是复选框，其底部是帧率提示语 `y+15` 的锚点，也是底部按钮位置的基准。
+- **自动暂停开关 / 二倍速开关**（已迁至「特殊操作」页）：复选框 `x` `GuiXMargin`，行文本左对齐同列，按键 Edit 用 `x+20` 紧随文本右侧（随各语言文本长度自然右移，不再固定列）。
+- **关卡守卫开关**：上移占原「开局自动暂停」行位，左缘沿用该行旧列 `auxRowX`(404)，并用 `Min(auxRowX, 708 - 实测宽)` 钳制，防超长文案越出右缘；快捷操作页的「放弃行动」复选框同列同位（`auxRowY` 由 `GuiFrame` 的 y 推出）。
+- **特殊操作页**：单列 5 行，首行 `y48`，行距 33；两处「横线 + 文本」分区头与「其他设置」页同款（`x` `GuiXMargin` `w` `GuiWidth-60` `h1 BackgroundBorder Center Section` + `xs+40 y+-9 Center cMuted` 文本，靠 `_SetOverlayZ(txt, 0)` 让文本截断线身）；第二区横线在上一区末行下方 48px。
+- **帧率提示语的锚点是「关卡守卫」复选框**（迁移后本行最后一个控件）：其底部决定所有页面的底部基准 `_BottomBaseY`，进而决定窗口高度与底部按钮位置。
 - 「游戏路径」行标签上限 `zhW+29`（中文基准宽 +29px），**不得越过 `x131` 分隔线**；各语言的标签/编辑框列位置一致。
 - 提示文本右缘固定在内容区右缘 `x690`，宽度不随语言变化（超宽裁剪，须按语言人工验证）。
 - 卫戍协议页分两列用 **`Floor` 而非 `Ceil`**：奇数项时右列要比左列**多**一行，否则末行提示语会与左列末行重叠。自定义按键页固定 12 行预建（两列 × 6，AHK 控件无法运行时创建/销毁）。
@@ -37,6 +38,8 @@
 `GuiManager` 维护 `_InitialValues` 快照和 `IsModified` 标志。`CaptureInitialSnapshot()` 在设置加载/保存/应用后保存所有控件当前值，`TrackChange(key)` 在控件变更时将当前值与快照对比，同时将新值同步写入 Config 内存（热键控件和 SwitchHotkey 已由 `KeyBinder.EndChange` 提前写入，`TrackChange` 负责其余控件）。
 
 **语言切换会重建窗口**（`_OnSettingsSaved`/`_OnSettingsApplied` 的 `_LanguageChanged` 分支），该分支必须在 `Rebuild()` 之后同样执行 `SetIsModifiedFalse()` + `CaptureInitialSnapshot()`——否则保存成功后脏标志残留，重开窗口会误报"修改尚未保存或应用"并点亮保存/应用按钮。
+
+**`SettingsChanged` 下发的单键变更必须同步快照**：该事件一律由 `SettingsService.UpdatePersistedValue` 发布（写 INI → 更新内存 → 发事件），即"值已持久化"。若只写回控件而不把 `_InitialValues[key]` 前移到新值，快照会停在窗口打开时的旧值——用户随后**第一次**手动改回旧值恰好与快照相等，`TrackChange` 判为"未修改"，保存/应用不亮（第二次点击才被识别）。修法：`_OnSettingsChanged` = `_ApplySettingsChanged`（写回控件）+ `_SyncInitialValue(key)`（快照对齐）。典型触发者：快捷键切换 `AutoBeginPause`/`AutoBeginSpeed`、自动识别游戏路径写 `GamePath`。
 
 ## GUI 脏值对比
 
@@ -136,11 +139,11 @@ Theme 生命周期与低频模式变化使用现有 Logger；绘制故障按操�
 
 ## 顶部标签页管理器（gui.ahk）
 
-`TabItems` 数组描述五个标签（`keyBind`/`quick`/`strongHoldProtocol`/`customKeys`/`other`），`CanHide` 控制可否隐藏（`other` 不可隐藏；`customKeys` 为管理型标签页可隐藏，隐藏仅失去编辑入口、已绑定按键照常按其类型生效）。
+`TabItems` 数组描述六个标签（`keyBind`/`quick`/`strongHoldProtocol`/`customKeys`/`specialOps`/`other`），`CanHide` 控制可否隐藏（`other` 不可隐藏；`customKeys` 与 `specialOps` 为管理型标签页可隐藏，隐藏仅失去编辑入口、已绑定按键照常按其类型生效，切到这两页也不改变当前热键组）。
 
 `TabOrder`/`HiddenTabs` 两个 Important 配置项存顺序与隐藏列表，通过两个 **Hidden Edit 表单变量**（`vTabOrder`/`vHiddenTabs`）与 `MainGui["TabOrder"]` 交互——必须放布局链之外（如 `sepCustom` 前），否则破坏自定义页左列 `y+10` 相对定位。
 
-`AppliedTabSettings` 存已应用快照，`IsTabVisible()` 优先读快照、`tabItem.Visible` 是工作态（统计当前可见性直接遍历 `tabItem.Visible`）。眼睛图标统一 `U+E890`（蓝=显示/灰=隐藏），禁止隐藏最后一个功能标签时弹窗。`LastActiveTab` 只记录功能标签页（排除 `other` 与 `customKeys`）。
+`AppliedTabSettings` 存已应用快照，`IsTabVisible()` 优先读快照、`tabItem.Visible` 是工作态（统计当前可见性直接遍历 `tabItem.Visible`）。眼睛图标统一 `U+E890`（蓝=显示/灰=隐藏），禁止隐藏最后一个功能标签时弹窗。`LastActiveTab` 只记录功能标签页（排除 `other`、`customKeys` 与 `specialOps`；`_UpdateTopTabBar` 的 `isOther` 分支据此决定「其他设置」页上的 ✓/✗ 标记）。
 
 ## Segoe MDL2 Assets 图标码点
 

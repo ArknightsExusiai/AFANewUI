@@ -17,6 +17,12 @@ class GameMonitor {
     static _BlackScreenDetected := false
     static _ReadyForPause := false
 
+    ; 按住开局暂停
+    static _HoldPhaseActive := false
+    static _HoldNoDeadline := false
+    static _HoldKeepNormalWait := false
+    static _HoldKey := ""
+
     ; 启动监控定时器
     static Start() {
         if (this._CheckTimer = "")
@@ -159,6 +165,42 @@ class GameMonitor {
         this._PauseWaitTick()
     }
 
+    ; 按住开局暂停
+    static BeginPauseHold(holdMode := true, pureKey := "") {
+        keepNormalWait := holdMode && (this._ReadyForPause || this._BlackScreenDetected)
+        this._HoldPhaseActive := true
+        this._HoldNoDeadline := holdMode
+        this._HoldKeepNormalWait := keepNormalWait
+        this._HoldKey := holdMode ? pureKey : ""
+        if holdMode {
+            if !keepNormalWait
+                this._PauseWaitDeadline := 0
+        } else {
+            this._PauseWaitDeadline := A_TickCount + this.PauseWaitTimeoutMs
+        }
+        this._ReadyForPause := true
+        Logger.Info("GameMonitor", "按住开局暂停：直接进入等待倍速按钮阶段（保留常规等待=" (keepNormalWait ? "是" : "否") "，超时=" (this._HoldNoDeadline ? "不设上限" : "沿用常规") "）")
+        this._PauseWaitTick()
+    }
+
+    static EndPauseHold() {
+        if !this._HoldPhaseActive {
+            Logger.Info("GameMonitor", "按住开局暂停：松开时等待阶段已结束，无需取消")
+            return
+        }
+        keepNormalWait := this._HoldKeepNormalWait
+        this._HoldPhaseActive := false
+        this._HoldNoDeadline := false
+        this._HoldKeepNormalWait := false
+        this._HoldKey := ""
+        if keepNormalWait {
+            Logger.Info("GameMonitor", "按住开局暂停：松开，常规自动暂停路径仍在等待，保留")
+            return
+        }
+        Logger.Info("GameMonitor", "按住开局暂停：松开，取消本次识别")
+        this._ResetPauseWait()
+    }
+
     ; 「等待倍速按钮」单拍：命中则暂停并收尾，未命中则重新排程下一拍
     static _PauseWaitTick() {
         try oldCtx := DllCall("SetThreadDpiAwarenessContext", "ptr", -3, "ptr")
@@ -173,7 +215,12 @@ class GameMonitor {
                 this._ResetPauseWait()
                 return
             }
-            if (A_TickCount > this._PauseWaitDeadline) {
+            if (this._HoldNoDeadline && this._HoldKey != "" && !HoldGuard.IsHolding(this._HoldKey)) {
+                Logger.Info("GameMonitor", "按住开局暂停：按住周期已结束，取消识别")
+                this.EndPauseHold()
+                return
+            }
+            if (!this._HoldNoDeadline && this._PauseWaitDeadline != 0 && A_TickCount > this._PauseWaitDeadline) {
                 Logger.Info("GameMonitor", "等待倍速按钮：8 秒内未识别到倍速按钮，放弃本次检测")
                 this._ResetPauseWait()
                 return
@@ -191,11 +238,14 @@ class GameMonitor {
             Logger.Info("GameMonitor", "等待倍速按钮：命中白色像素（x=" Round(FoundX) " y=" Round(FoundY) "），进入进关后处理")
             autoPause := Config.ReadImportantFromIni("AutoBeginPause") == "1"
             autoSpeed := Config.ReadImportantFromIni("AutoBeginSpeed") == "1"
-            if autoPause {
+            ; 忽略「启用开局自动暂停」开关，且代理指挥也保持暂停
+            forcedPause := this._HoldPhaseActive
+            needPause := autoPause || forcedPause
+            if needPause {
                 GameKeys.SendDown("pauseBattle")
                 USleep(50)
                 GameKeys.SendUp("pauseBattle")
-                Logger.Info("GameMonitor", "自动暂停：已暂停")
+                Logger.Info("GameMonitor", forcedPause ? "按住开局暂停：已暂停（按住触发，忽略自动暂停开关）" : "自动暂停：已暂停")
             }
             ; 后置代理指挥识别，识别到代理指挥时取消暂停
             isProxy := false
@@ -214,8 +264,10 @@ class GameMonitor {
             if !handHit
                 isProxy := false
             Logger.Info("GameMonitor", "代理指挥判定：接管按钮=" (takeoverHit ? "命中" : "未命中") "，手图标=" (handHit ? "命中" : "未命中") "，判定=" (isProxy ? "代理" : "非代理"))
-            if autoPause {
-                if isProxy {
+            if needPause {
+                if (isProxy && forcedPause) {
+                    Logger.Info("GameMonitor", "代理指挥，但本次为按住触发，保持暂停")
+                } else if isProxy {
                     GameKeys.SendDown("pauseBattle")
                     USleep(50)
                     GameKeys.SendUp("pauseBattle")
@@ -226,7 +278,7 @@ class GameMonitor {
             }
             ; 开局自动二倍速：非代理作战时切一次倍速
             if (autoSpeed && !isProxy) {
-                Logger.Info("GameMonitor", "开局自动二倍速：开始注入倍速键（自动暂停=" (autoPause ? "开" : "关") "）")
+                Logger.Info("GameMonitor", "开局自动二倍速：开始注入倍速键（自动暂停=" (autoPause ? "开" : "关") "，按住触发=" (forcedPause ? "是" : "否") "）")
                 GameKeys.Tap("changeSpeed")
                 Logger.Info("GameMonitor", "开局自动二倍速：已切换倍速")
             } else {
@@ -253,6 +305,10 @@ class GameMonitor {
         SetTimer this._PauseWaitTimerTick(), 0
         this._BlackScreenDetected := false
         this._ReadyForPause := false
+        this._HoldPhaseActive := false
+        this._HoldNoDeadline := false
+        this._HoldKeepNormalWait := false
+        this._HoldKey := ""
         this.SetPollInterval(400)
     }
 
