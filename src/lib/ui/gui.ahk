@@ -337,7 +337,7 @@ class GuiManager {
         auxRowY -= 2
         auxRowX := 404
 
-        checkboxBackCease := Theme.Add(this.MainGui, "Checkbox", "x" auxRowX " y" auxRowY " vBackCeaseOperations", I18n.T(" 使用“返回上级菜单”放弃行动"))
+        checkboxBackCease := Theme.Add(this.MainGui, "Checkbox", "x" auxRowX " y" auxRowY " h24 vBackCeaseOperations", I18n.T(" 使用“返回上级菜单”放弃行动"))
         checkboxBackCease.OnEvent("Click", (*) => this.TrackChange("BackCeaseOperations"))
         StatusBarHints.Register(checkboxBackCease, "使“返回上级菜单”按下ESC的同时按下“放弃行动”键")
         this.MainGui["BackCeaseOperations"].Value := Config.GetImportant("BackCeaseOperations")
