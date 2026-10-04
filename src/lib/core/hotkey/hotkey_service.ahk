@@ -168,6 +168,7 @@ class HotkeyService {
         "PauseRetreat", HotkeyActions.ActionPauseRetreat.Bind(HotkeyActions),
         "AutoBeginPauseSwitch", HotkeyActions.ActionBeginPauseSwitch.Bind(HotkeyActions),
         "AutoBeginSpeedSwitch", HotkeyActions.ActionBeginSpeedSwitch.Bind(HotkeyActions),
+        "AutoBeginPauseHold", HotkeyActions.ActionBeginPauseHold.Bind(HotkeyActions),
         ; 快捷操作
         "LButtonClick", HotkeyActions.ActionLButtonClick.Bind(HotkeyActions),
         "Harvest", HotkeyActions.ActionHarvest.Bind(HotkeyActions),

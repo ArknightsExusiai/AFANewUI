@@ -191,6 +191,11 @@ class HoldGuard {
             this._IsGatedKey[pureKey] := false
     }
 
+    ; 该键当前是否处于按住周期（供按住型动作的物理态兜底判断）
+    static IsHolding(pureKey) {
+        return pureKey != "" && this._Holds.Has(pureKey)
+    }
+
     ; 动作入口调用
     static TryBegin(pureKey) {
         if (pureKey = "")
@@ -647,6 +652,19 @@ class HotkeyActions {
         EventBus.Publish("SettingsValueChangeRequested", {key: "AutoBeginSpeed", value: newValue})
         if InStr(ThisHotkey, "Wheel")
             return
+    }
+
+    ; 按住开局暂停
+    static ActionBeginPauseHold(ThisHotkey) {
+        pureKey := KeyForward.PureKeyName(ThisHotkey)
+        if InStr(ThisHotkey, "Wheel") {
+            Logger.Info("HotkeyActions", "ActionBeginPauseHold 执行：滚轮无松开事件，按一次触发并以常规超时收尾，key=" pureKey)
+            GameMonitor.BeginPauseHold(false)
+            return
+        }
+        Logger.Info("HotkeyActions", "ActionBeginPauseHold 执行，key=" pureKey)
+        GameMonitor.BeginPauseHold(true, pureKey)
+        HoldGuard.RegisterTail(pureKey, (*) => GameMonitor.EndPauseHold())
     }
 
     ; 模拟鼠标左键点击
