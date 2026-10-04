@@ -1356,31 +1356,44 @@ class GuiManager {
     ; 处理单键设置变更
     static _OnSettingsChanged(data) {
         try {
-            if (data.key = "Frame") {
-                this.MainGui["Frame"].Value := this._FrameTextToIndex(data.value)
-                return
-            }
-            if (data.key = "AutoBeginPause") {
-                this.MainGui["AutoBeginPause"].Value := (data.value = "1" || data.value = 1) ? 1 : 0
-                return
-            }
-            if (data.key = "AutoBeginSpeed") {
-                this.MainGui["AutoBeginSpeed"].Value := (data.value = "1" || data.value = 1) ? 1 : 0
-                return
-            }
-            if (data.key = "ThemeMode") {
-                this.MainGui["ThemeMode"].Value := this._ThemeToIndex(data.value)
-                return
-            }
-            if (data.key = "Language") {
-                this.MainGui["Language"].Value := this._LanguageToIndex(data.value)
-                return
-            }
-            value := data.value
-            if (Config.AllHotkeys.Has(data.key) || data.key = "SwitchHotkey")
-                value := KeyFormat.VirtualNewkeyFormat(value)
-            this.MainGui[data.key].Value := value
+            this._ApplySettingsChanged(data)
+            this._SyncInitialValue(data.key)
         }
+    }
+
+    ; 内部：把变更值写回对应控件
+    static _ApplySettingsChanged(data) {
+        if (data.key = "Frame") {
+            this.MainGui["Frame"].Value := this._FrameTextToIndex(data.value)
+            return
+        }
+        if (data.key = "AutoBeginPause") {
+            this.MainGui["AutoBeginPause"].Value := (data.value = "1" || data.value = 1) ? 1 : 0
+            return
+        }
+        if (data.key = "AutoBeginSpeed") {
+            this.MainGui["AutoBeginSpeed"].Value := (data.value = "1" || data.value = 1) ? 1 : 0
+            return
+        }
+        if (data.key = "ThemeMode") {
+            this.MainGui["ThemeMode"].Value := this._ThemeToIndex(data.value)
+            return
+        }
+        if (data.key = "Language") {
+            this.MainGui["Language"].Value := this._LanguageToIndex(data.value)
+            return
+        }
+        value := data.value
+        if (Config.AllHotkeys.Has(data.key) || data.key = "SwitchHotkey")
+            value := KeyFormat.VirtualNewkeyFormat(value)
+        this.MainGui[data.key].Value := value
+    }
+
+    ; 内部：把某键的初始快照对齐到控件当前值（无快照或无控件时跳过）
+    static _SyncInitialValue(key) {
+        if !this._InitialValues.Has(key)
+            return
+        try this._InitialValues[key] := this.MainGui[key].Value
     }
 
     ; 生成“已识别区服路径”多行文本
