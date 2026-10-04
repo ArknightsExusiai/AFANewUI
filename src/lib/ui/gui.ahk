@@ -481,7 +481,7 @@ class GuiManager {
         this.SpecialOpsControls.Push(editSpecialOpsPauseToggle)
 
         txtSpecialOpsPauseHold := Theme.Add(this.MainGui, "Text", "x" this.GuiXMargin " y" (specialOpsRowY + 66),
-            I18n.T("「长按开局暂停」快捷键"))
+            I18n.T("「按住开局暂停」快捷键"))
         editSpecialOpsPauseHold := Theme.Add(this.MainGui, "Edit", "x+20 yp-4 w140 Center -TabStop Uppercase vAutoBeginPauseHold",
             Config.GetHotkey("AutoBeginPauseHold"))
         StatusBarHints.Register(txtSpecialOpsPauseHold, "关卡加载时按住，直到进入关卡后自动暂停（不受「启用开局自动暂停」开或关的影响）")
