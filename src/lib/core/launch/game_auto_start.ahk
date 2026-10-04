@@ -469,11 +469,17 @@ class GameAutoStartManager {
                 || existing.Settings.MultipleInstances != desired.Settings.MultipleInstances
                 || existing.Settings.ExecutionTimeLimit != desired.Settings.ExecutionTimeLimit)
                 return this._TaskMismatch("settings")
-            existingPrincipalId := StrLower(existing.Principal.UserId)
-            desiredPrincipalId := StrLower(desired.Principal.UserId)
             expectedSid := StrLower(userSid)
-            if !this._IsSamePrincipalUserId(existingPrincipalId, desiredPrincipalId, expectedSid)
-                return this._TaskMismatch("principal_user")
+            existingPrincipalSid := StrLower(this._ReadPrincipalSid(existing))
+            if (StrLen(existingPrincipalSid) > 0) {
+                if (existingPrincipalSid != expectedSid)
+                    return this._TaskMismatch("principal_user")
+            } else {
+                existingPrincipalId := StrLower(existing.Principal.UserId)
+                desiredPrincipalId := StrLower(desired.Principal.UserId)
+                if !this._IsSamePrincipalUserId(existingPrincipalId, desiredPrincipalId, expectedSid)
+                    return this._TaskMismatch("principal_user")
+            }
             if (existing.Principal.LogonType != desired.Principal.LogonType)
                 return this._TaskMismatch("principal_logon_type")
             if (existing.Principal.RunLevel != desired.Principal.RunLevel)
@@ -504,6 +510,16 @@ class GameAutoStartManager {
         return false
     }
 
+    ; 从任务定义 XML 读取主体 SID，读不到返回空串
+    static _ReadPrincipalSid(definition) {
+        try xmlText := definition.XmlText
+        catch
+            return ""
+        if RegExMatch(xmlText, "i)<UserId>\s*(S-1-[0-9-]+)\s*</UserId>", &match)
+            return match[1]
+        return ""
+    }
+
     static _IsSamePrincipalUserId(existingId, desiredId, expectedSid) {
         if (existingId = desiredId || existingId = expectedSid)
             return true
@@ -517,7 +533,16 @@ class GameAutoStartManager {
             return ""
         if RegExMatch(accountName, "i)^S-1-")
             return accountName
+        if !InStr(accountName, "\") {
+            localSid := this._LookupUserSid(A_ComputerName "\" accountName)
+            if (StrLen(localSid) > 0)
+                return localSid
+        }
+        return this._LookupUserSid(accountName)
+    }
 
+    ; 按账户名查询 SID，仅接受用户类型账户
+    static _LookupUserSid(accountName) {
         sidSize := 0
         domainSize := 0
         sidUse := 0
@@ -532,6 +557,8 @@ class GameAutoStartManager {
         if !DllCall("Advapi32\LookupAccountNameW",
             "Ptr", 0, "WStr", accountName, "Ptr", sidBuffer, "UInt*", &sidSize,
             "Ptr", domainBuffer, "UInt*", &domainSize, "UInt*", &sidUse, "Int")
+            return ""
+        if (sidUse != 1)
             return ""
 
         stringSidPointer := 0
