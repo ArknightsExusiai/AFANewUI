@@ -41,7 +41,7 @@
 
 拦截正则通过 `GameKeys.GetInterceptPattern()` 动态生成——从注册表读取所有游戏按键 + `Escape|RButton|MButton`。AFA 热键绑定的按键若匹配拦截正则，不加 `~` 前缀（阻止原键传递到游戏），否则加 `~` 前缀（透传）。**down 与 Up 两个变体的 `~` 必须一致**（非拦截键注册 `~X Up`）：不带 `~` 的 Up 变体是「吞键型」，会让 AHK 把该键的 down 也一并吞掉（详见下节）；拦截键两侧都不带 `~`，由透传层补发。用户自定义游戏按键后，轮询检测到注册表变更自动重建热键，拦截列表随之更新。
 
-**热键分组**：三组热键：CombatHotkeys（常规作战）、QuickHotkeys（快捷操作）、StrongHoldHotkeys（卫戍协议）。按标签页启用对应组，组间互斥。自定义按键按「按键类型」并入既有组（global 任何标签下注册、combat/quick 并入常规组、strongHold 并入卫戍组）；「自定义按键」标签页为管理型（不切换热键组）。自定义按键**不进** `HotkeySchema.Items`（条数运行时可变），其类型 → 生效组 / 是否受守卫的映射只在 `HotkeySchema.CustomTypeProfiles` 定义。`ActionCallbacks` 数据化（`{Fn, Guarded}`）声明守卫标志，为守卫拦截键注册 Up 变体补发透传。
+**热键分组**：三组热键：CombatHotkeys（常规作战）、QuickHotkeys（快捷操作）、StrongHoldHotkeys（卫戍协议）。按标签页启用对应组，组间互斥。自定义按键按「按键类型」并入既有组（global 任何标签下注册、combat/quick 并入常规组、strongHold 并入卫戍组）；「自定义按键」与「特殊操作」标签页为管理型（切到这两页不切换热键组，`HotkeyService._HandleActiveTabChangeRequested` 对 `other`/`customKeys`/`specialOps` 直接返回，`GuiManager.LastActiveTab` 也不记录它们）。自定义按键**不进** `HotkeySchema.Items`（条数运行时可变），其类型 → 生效组 / 是否受守卫的映射只在 `HotkeySchema.CustomTypeProfiles` 定义。`ActionCallbacks` 数据化（`{Fn, Guarded}`）声明守卫标志，为守卫拦截键注册 Up 变体补发透传。
 
 ## 常规作战关卡守卫与按键透传
 

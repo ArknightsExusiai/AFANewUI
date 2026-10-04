@@ -24,7 +24,8 @@
 | 项 | 职责 |
 |---|---|
 | `HoldGuard.TryBegin(pureKey)` | 动作入口调用。返回 true = 该键仍在上一个按住周期内，本次 down（键盘自动重复）应忽略；返回 false = 新按住周期，调用方继续执行动作 |
-| `HoldGuard.RegisterTail(pureKey, fn)` | 注册「按住周期结束时的收尾回调」。带松开尾部的动作（如模拟左键点击的 `{LButton Up}`）用它替代原来挂在 `PureKeyWait` 之后的尾部 |
+| `HoldGuard.RegisterTail(pureKey, fn)` | 注册「按住周期结束时的收尾回调」。带松开尾部的动作（如模拟左键点击的 `{LButton Up}`、按住开局暂停的「松开即取消识别」）用它替代原来挂在 `PureKeyWait` 之后的尾部 |
+| `HoldGuard.IsHolding(pureKey)` | 查询该键当前是否处于按住周期（不改变状态）。按住型动作的物理态兜底用它判断"按住周期已结束但收尾回调来不及注册"（按下与松开几乎同时到达） |
 | `HoldGuard.EndHoldMs(pureKey)` | 物理抬起时由 `X Up` 变体调用：结束按住周期 + 执行尾部。**这是正常路径，毫秒级，不经过定时器** |
 | `HoldGuard._Poll()` | 兜底定时器回调：①物理态校验 ②物理态跳变自愈 ③执行因兜底而触发的尾部 |
 
