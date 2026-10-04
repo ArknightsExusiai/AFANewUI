@@ -484,8 +484,8 @@ class GuiManager {
             I18n.T("「按住开局暂停」快捷键"))
         editSpecialOpsPauseHold := Theme.Add(this.MainGui, "Edit", "x+20 yp-4 w140 Center -TabStop Uppercase vAutoBeginPauseHold",
             Config.GetHotkey("AutoBeginPauseHold"))
-        StatusBarHints.Register(txtSpecialOpsPauseHold, "关卡加载时按住，直到进入关卡后自动暂停（不受「启用开局自动暂停」开或关的影响）")
-        StatusBarHints.Register(editSpecialOpsPauseHold, "关卡加载时按住，直到进入关卡后自动暂停（不受「启用开局自动暂停」开或关的影响）")
+        StatusBarHints.Register(txtSpecialOpsPauseHold, "在关卡加载时按住，进入关卡后会自动暂停（不受「启用开局自动暂停」勾选与否的影响）")
+        StatusBarHints.Register(editSpecialOpsPauseHold, "在关卡加载时按住，进入关卡后会自动暂停（不受「启用开局自动暂停」勾选与否的影响）")
         this.SpecialOpsControls.Push(txtSpecialOpsPauseHold)
         this.SpecialOpsControls.Push(editSpecialOpsPauseHold)
 
@@ -800,7 +800,7 @@ class GuiManager {
         this.CustomControls.Push(updownClickDelay)
 
         ; 启用/禁用热键快捷键
-        txtSwitchHotkey := Theme.Add(this.MainGui, "Text", "xs y+16 Right +0x200", I18n.T("启用/禁用热键快捷键"))
+        txtSwitchHotkey := Theme.Add(this.MainGui, "Text", "xs y+16 Right +0x200", I18n.T("「启用/禁用热键」快捷键"))
         this.SwitchHotkey := Theme.Add(this.MainGui, "Edit", "x+10 yp-4 w140 Center -TabStop Uppercase vSwitchHotkey", Config.GetCustom(
             "SwitchHotkey"))
         StatusBarHints.Register(this.SwitchHotkey, "「启用/禁用热键」的快捷键：点击输入框修改，BACKSPACE/DELETE 清除")
@@ -837,7 +837,7 @@ class GuiManager {
         ; 失焦悬停操作热键开关
         checkboxHoverOperate := Theme.Add(this.MainGui, "Checkbox", "xs y+14 w" Max(290, Metrics.TextWidth(I18n.T("游戏窗口未激活时允许鼠标悬停在窗口上触发热键")) + 24) " h24 vHoverOperate", I18n.T("游戏窗口未激活时允许鼠标悬停在窗口上触发热键"))
         checkboxHoverOperate.OnEvent("Click", (*) => this.TrackChange("HoverOperate"))
-        StatusBarHints.Register(checkboxHoverOperate, "游戏窗口未激活时，鼠标悬停在窗口上也能触发热键（键盘键需动作层激活游戏）")
+        StatusBarHints.Register(checkboxHoverOperate, "游戏窗口未激活时，鼠标悬停在窗口上也能触发热键")
         this.MainGui["HoverOperate"].Value := Config.GetCustom("HoverOperate")
         this.CustomControls.Push(checkboxHoverOperate)
 
