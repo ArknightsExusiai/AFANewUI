@@ -47,7 +47,8 @@ class Config {
         "InLevelGuard", "1",
         "DebugEnabled", "0",
         "Language", "auto",
-        "ThemeMode", "auto"
+        "ThemeMode", "auto",
+        "UiEngine", "classic"
     )
 
     ; 内部：默认自定义设置
@@ -122,6 +123,8 @@ class Config {
             this.InitPath()
         if (key = "ThemeMode")
             return Constants.NormalizeThemeMode(IniRead(this.IniFile, "Main", key, "auto"))
+        if (key = "UiEngine")
+            return Constants.NormalizeUiEngine(IniRead(this.IniFile, "Main", key, "classic"))
         if (key = "GitHubToken") {
             return this._ReadGitHubToken()
         }
@@ -147,6 +150,8 @@ class Config {
     static SetImportant(key, value) {
         if (key = "ThemeMode")
             value := Constants.NormalizeThemeMode(value)
+        if (key = "UiEngine")
+            value := Constants.NormalizeUiEngine(value)
         this._ImportantSettings[key] := value
         if (key = "Frame")
             this._ImportantSettings["Frame155"] := value
@@ -442,6 +447,7 @@ class Config {
         }
 
         this._ImportantSettings["ThemeMode"] := Constants.NormalizeThemeMode(this._ImportantSettings["ThemeMode"])
+        this._ImportantSettings["UiEngine"] := Constants.NormalizeUiEngine(this._ImportantSettings["UiEngine"])
 
         ; 加载自定义设置
         for keyVar, defaultVal in this._DefaultCustom {
