@@ -16,6 +16,18 @@ class Constants {
         return "auto"
     }
 
+    ; 界面引擎：唯一合法值集合与规范化规则
+    static UiEngines := ["classic", "web"]
+
+    ; 规范化界面引擎：大小写不敏感，非法值回退 classic
+    static NormalizeUiEngine(engine) {
+        engine := StrLower(engine)
+        for item in this.UiEngines
+            if (item = engine)
+                return engine
+        return "classic"
+    }
+
     ; 延迟常量
     static Delay30 := 34      ; 30帧
     static Delay60 := 17      ; 60帧
@@ -75,7 +87,8 @@ class Constants {
         "InLevelGuard", "在非战斗关卡场景禁用常规战斗热键",
         "DebugEnabled", "显示调试日志控制台",
         "Language", "界面语言",
-        "ThemeMode", "界面主题"
+        "ThemeMode", "界面主题",
+        "UiEngine", "界面引擎"
     )
 
     ; 自定义设置名称映射
