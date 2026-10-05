@@ -550,7 +550,6 @@ class LocaleEnUS {
         "鼠标移动到想要开技能的单位上，按下后自动选中并开启技能", "Move the mouse to the unit you want to use a skill on, then press to select and activate the skill automatically",
         "鼠标移动到想要撤退的单位上，按下后自动选中并撤退", "Move the mouse to the unit you want to retreat, then press to select and retreat automatically",
         "界面主题", "Interface theme",
-        "界面引擎", "Interface engine",
         "跟随系统", "Follow system",
         "浅色", "Light",
         "深色", "Dark",
