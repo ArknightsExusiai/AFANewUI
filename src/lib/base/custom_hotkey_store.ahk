@@ -1,17 +1,11 @@
 ; == 自定义按键存储（CustomHotkeys.json 唯一 owner） ==
-; 独立于 Settings.ini 的用户数据文件：UTF-8 JSON，固定写入格式 + 严格读取 + 损坏备份兜底。
-;   1. 写定式：键序固定（key/name/func/arg/type）、紧凑单行，字符串只转义 \ " 与 \r\n\t；
-;   2. 字符集白名单（名称禁引号/反斜杠/控制字符，坐标文本天然不含），读取器可用严格正则完整解析；
-;   3. 任何不一致 → 备份 .bak + Warn + 空列表（绝不抛异常、绝不崩溃）；
-;   4. 写入走「临时文件 + ReplaceFileW」原子替换；清空写空数组而非删文件（规避 FileDelete 陷阱）。
+; 写定式 + 严格正则读取；任何不一致 → 备份 .bak + Warn + 空列表，绝不抛异常。
 
 class CustomHotkeyStore {
     static File := ""
     static BAK_SUFFIX := ".bak"
-    static FORMAT_VERSION := 2  ; v2：条目字段 key/name/func/arg/type（func=按键功能码、arg=参数文本）
-                               ; v1（tap/usleep 脚本）不做迁移：旧文件按损坏处理备份为 .bak
+    static FORMAT_VERSION := 2
 
-    ; 初始化文件路径（与 Settings.ini 同目录）
     static InitPath() {
         configDir := A_AppData "\ArknightsFrameAssistant\PC"
         if !DirExist(configDir)
@@ -19,8 +13,8 @@ class CustomHotkeyStore {
         this.File := configDir "\CustomHotkeys.json"
     }
 
-    ; 读取全部条目。文件不存在 → 空数组；解析失败 → 备份 .bak + Warn + 空数组。
-    ; 返回 Array<{Key, Name, Func, Arg, Type}>（type/func 为原始字符串，非法值由 Config 层宽容回退）。
+    ; 读取全部条目；文件不存在或解析失败 → 空数组
+    ; 返回 Array<{Key, Name, Func, Arg, Type}>
     static Load() {
         if this.File = ""
             this.InitPath()
@@ -45,7 +39,7 @@ class CustomHotkeyStore {
         return entries
     }
 
-    ; 原子替换写入。返回 {success, message}（message 为技术错误原文，弹窗文案由调用方经 I18n 包装）
+    ; 原子替换写入；返回 {success, message}（message 为技术错误原文）
     static Save(entries) {
         if this.File = ""
             this.InitPath()
@@ -85,7 +79,7 @@ class CustomHotkeyStore {
         }
     }
 
-    ; ── 内部：序列化（写定式） ──
+    ; ── 内部：序列化 ──
     static _Serialize(entries) {
         body := ""
         for i, entry in entries {
@@ -100,7 +94,7 @@ class CustomHotkeyStore {
         return '{"version":' this.FORMAT_VERSION ',"keys":[' body "]}"
     }
 
-    ; JSON 字符串转义：\ " 与 \r \n \t（其余控制字符由上游校验排除，坐标/名称语法天然不含）
+    ; JSON 字符串转义：\ " 与 \r \n \t（其余控制字符由上游白名单排除）
     static _Quote(s) {
         s := StrReplace(s, "\", "\\")
         s := StrReplace(s, '"', '\"')
@@ -110,8 +104,8 @@ class CustomHotkeyStore {
         return '"' s '"'
     }
 
-    ; ── 内部：严格解析（写定式自锁：固定键序 + 字符集白名单保证正则无歧义） ──
-    ; 成功返回 Array；失败返回 ""（未设置值）
+    ; ── 内部：严格解析 ──
+    ; 成功返回 Array，失败返回 ""
     static _Parse(text) {
         text := Trim(text)
         skeleton := '^\{"version":' this.FORMAT_VERSION ',"keys":\[(.*)\]}$'
@@ -148,7 +142,7 @@ class CustomHotkeyStore {
         return s
     }
 
-    ; ── 内部：损坏文件备份（同名覆盖旧备份） ──
+    ; ── 内部：损坏文件备份 ──
     static _BackupCorrupt() {
         bak := this.File this.BAK_SUFFIX
         if FileExist(bak)

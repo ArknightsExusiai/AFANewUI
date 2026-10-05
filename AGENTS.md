@@ -16,11 +16,7 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 - **不用 AHK 执行/编译 AFA**：默认不编译或启动 AFA；只有用户明确要求构建时才使用已验证的本地 AutoHotkey/Ahk2Exe 工具。GUI、提权、计划任务和真实游戏联动的验收由用户操作并反馈。
 - **验收分工**：运行时与 GUI 验收以手工测试为主，Python 静态门禁检查**不能**代替运行时验收。每次完成行为修改后，调用 `test-checklist` skill 生成测试清单并逐项引导用户验证；清单放 `test/` 目录，格式参考 `test/template/test_template.md`。
 - **改动前先跑静态门禁**（命令与适用场景见 [reference.md 工具表](docs/design/reference.md#静态检查工具)）：`layer_check.py`（跨模块引用/include 顺序）、`event_contract_check.py`（事件契约）、`i18n_check.py`（文案与语言资源）。
-- **用 AHK 脚本做测试时的错误捕获**（否则只能拿到弹窗、拿不到结果），三层缺一不可：
-  1. 脚本首行 `#ErrorStdOut "UTF-8"` —— `OnError` **抓不到加载期错误**（缺 `#Include`、include 路径写错、语法错误都会绕过它直接弹窗），该指令把这类错误送 stderr。依据 `docs/ahk_docs/lib/OnError.htm` 原文"It cannot be called for a load-time error"。
-  2. `OnError` 全局回调 —— 运行时错误先写文件（或 `FileAppend("...", "*")` 写 stdout）再 **`return 1`** 抑制默认错误弹窗（返回 `0`/空串仍会弹窗；`ExitApp` 亦可，但要确保先写完）。
-  3. 主流程 `try/catch` 兜住自身逻辑异常。
-  运行与取错：`AutoHotkey64.exe /ErrorStdOut "脚本.ahk" > out.txt 2> err.txt`（`/ErrorStdOut` 命令行开关与指令等价但对编译后的 exe 无效；stderr 即错误文本，WSL 侧可直接读取；AHK 非控制台程序，stdout/stderr 必须靠重定向或管道捕获）。只想校验能否加载而不执行时加 `/Validate`（见 `docs/ahk_docs/lib/_ErrorStdOut.htm`、`docs/ahk_docs/Scripts.htm#ErrorStdOut`）。
+- **不创建任何 AHK 脚本做任何测试** 所有需要测试确认的项一律请求用户进行，不要擅自创建或执行任何AHK脚本，除了 `test/scripts/smoke_test.ahk`
 - **不使用 worktree 开发**；提前查看 `.gitignore` 确认哪些更改不需要 commit（`CONTEXT.md`、`docs/adr`、`docs/architecture`、`docs/plan` 是本地文件，勿当作共享文档编辑）。
 - **Git 操作全由用户自行进行**：用户没要求就不要 commit、不要 push、不创建 PR、不创建或改变 branch。用户要求提交时，对 diff 详细分类并分开提交，标题与描述通顺易懂。
 - **翻译前先从 `docs/i18n/glossary.md` 取游戏术语官方译法**，再动手翻译。
@@ -33,8 +29,8 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 > 3. 事件命名统一 `XxxRequested`（命令）/ `XxxChanged`/`Started`/`Completed`（事实）；事件契约由 `tools/event_contract_check.py` 静态校验。
 > 4. 配置写入只经 `SettingsService`；热键元数据只来自 `base/hotkey_schema.ahk`；`State` 类已删除，字段归唯一 owner。
 
-**启动流程**（`main.ahk` 的 `App.Bootstrap()`）：环境初始化 → 单例识别 → 非管理员 `*RunAs` 提权重启 → `Logger.Init()` → 各域 `Init()` → `SettingsService.Initialize()` 加载配置 → 随游戏自启校准 → 资源提取 → `GameKeys.Init()` → `HotkeyService.HotkeyOn()` → `HookHealth.Start()` → GUI 初始化 → 发布 `AppStartCompleted` → `GameMonitor.Start()` → Legacy 事件收尾。
-**三条顺序依赖**：`GameKeys.Init()` 必须在 `HotkeyOn()` **之前**；`HookHealth.Start()` 必须在 `HotkeyOn()` **之后**；`SingleInstance.Release()` 必须先于 `*RunAs` 重启。完整流程（按 `StartupMark` 语义标记定位，不写行号）见 [module_responsibilities.md](docs/design/module_responsibilities.md#启动流程当前实现)。
+**启动流程**（`main.ahk` 的 `App.Bootstrap()`）：环境初始化 → 单例识别 → 非管理员 `*RunAs` 提权重启 → `Logger.Init()` → 各域 `Init()` → `SettingsService.Initialize()` 加载配置 → 随游戏自启校准 → 资源提取 → `GameKeys.Init()` → `HotkeyService.HotkeyOn()` → GUI 初始化 → 发布 `AppStartCompleted` → `GameMonitor.Start()` → Legacy 事件收尾。
+**两条顺序依赖**：`GameKeys.Init()` 必须在 `HotkeyOn()` **之前**；`SingleInstance.Release()` 必须先于 `*RunAs` 重启。完整流程（按 `StartupMark` 语义标记定位，不写行号）见 [module_responsibilities.md](docs/design/module_responsibilities.md#启动流程当前实现)。
 
 **模块职责**（56 个 `.ahk` 的完整表）见 [module_responsibilities.md](docs/design/module_responsibilities.md#模块职责)。改某个模块前先查它，勿凭猜测扩写。
 
@@ -65,6 +61,8 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 | [帧开头轮询推论](docs/design/key_designs_hotkey.md#明日方舟-pc-端按键识别帧开头状态轮询) | 游戏每帧开头轮询一次按键。AFA 注入某键 down 后、游戏下一帧轮询前，**不允许任何同键 up 到达游戏**（含透传补发），否则本次按下整次丢失 |
 | [递归抑制须键级作用域](docs/design/key_designs_hotkey.md#send-注入会触发热键) | 回调内 Send 同键必须加防递归标志，且用 `Map(pureKey→true)` 而非全局布尔（全局布尔会让第二个键的物理 up 被误挡→卡键） |
 | [`InjectedPressKeys` 抑制补发](docs/design/key_designs_hotkey.md#注入按下状态标记-gamekeysinjectedpresskeys) | 注入动作自管该键完整按下（down→up），`ActionUpForward` 见标记即抑制补发 up |
+| [按住型热键用 `HoldGuard` 收尾](docs/design/hold_guard.md#2-新模型按住去重状态机) | 动作入口靠 `HoldGuard.TryBegin` 去键盘自动重复（一个按住周期只执行一次），松开靠 `RegisterTail` 注册收尾回调；按住型动作还须兜住「按下与松开几乎同时到达、收尾回调来不及注册」——用 `HoldGuard.IsHolding()` 自检并取消，否则该状态永久驻留 |
+| [Up 变体的 `~` 须与 down 同形](docs/design/key_designs_hotkey.md#常规作战关卡守卫与按键透传) | `_RegisterOne` 给非拦截键注册 `~X`，其 `X Up` 也必须带 `~`：吞键型 Up 会让 AHK 连该键的 down 一起吞掉（防卡键规则），表现为该键在非游戏窗口彻底失灵且**零日志** |
 | [中断保护二选一](docs/design/key_designs_hotkey.md#线程抢占风险已修复) | 互斥语义不可混用：**只有过帧三件套用 `Critical`**（帧数精确性依赖完全不可中断）；需"防定时器抖动但放行其他热键"用 `Thread "NoTimers"` |
 | [勿恢复热键洪峰告警](docs/design/key_designs_hotkey.md#热键频率阈值) | `A_HotkeyInterval := 0` 是**永久关闭**该告警（不是调高上限），代价已接受——不得擅自恢复 |
 | [勿硬编码游戏窗口判定](docs/design/key_designs_hotkey.md#多区服与热路径预算) | 禁止在热键/监控路径直接写 `"ahk_exe Arknights.exe"`，宽松回退集中在 `GameTarget`；热键路径只允许 O(1) 查表 + 最多 2 次轻量 Win32 调用 |
@@ -76,12 +74,13 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 | 约束 | 说明 |
 |------|------|
 | [配置写入只经 `SettingsService`](docs/design/key_designs_base.md#config-读写分离与工作副本) | 运行时读配置用 `Read*FromIni()`（不碰内存工作副本），GUI 显示用 `Get*()` 工作副本；`Set*()` 仅写内存 |
+| [持久化变更须同步 GUI 快照](docs/design/key_designs_ui.md#脏状态与窗口重建) | 经 `SettingsService.UpdatePersistedValue` 发出的 `SettingsChanged` 一律表示该值已落盘：接收方写回控件后必须把 `_InitialValues[key]` 前移（`_SyncInitialValue`），否则用户随后**第一次**手动改回旧值会被判为「未修改」，保存/应用不亮 |
 | [新增热键/配置项四处同步](docs/design/key_designs_base.md#constants-类) | `HotkeySchema.Items`（带 `nameKey`）、`Constants.CustomNames`、`Config._DefaultCustom`、四张 locale 表；漏了会导致设置无法保存 |
 | [主题规范化单一入口](docs/design/key_designs_ui.md#主题生命周期与预览) | 合法值集合与规则只在 `Constants.NormalizeThemeMode`/`Constants.ThemeModes`，勿在别处再写一份 switch |
 | [文案键 = 中文原文](docs/design/i18n.md) | 新增用户可见文案即以中文原文为键，同步 zh-Hant / ja-JP / ko-KR / en-US 四表；日志/调试/内部异常**保持中文不译** |
 | [大资源表拆 `Data2`](docs/design/i18n.md#资源编译内置-map) | AHK 单条静态 `Map(...)` 约 19KB 解析上限，勿把 `Data2` 合并回单表 |
-| [布局/文案改动须五语言人工验证](docs/design/i18n.md#布局文案改动后须五语言人工验证) | 按 `test/test_i18n_four_language_regression.md` 逐语言核对换行/截断/对齐；优先"测量真实宽度"而非估算值 |
-| [`Logger.Debug` 恒持久化](docs/design/key_designs_base.md#logger-日志系统) | 无条件写盘（不受开关控制）；`DebugEnabled` 仅控制实时调试控制台 |
+| [布局/文案改动须五语言人工验证](docs/design/i18n.md) | 逐语言核对换行/截断/对齐；优先"测量真实宽度"而非估算值 |
+| [`Logger.Debug` 不落盘](docs/design/key_designs_base.md#logger-日志系统) | 只进 DebugView 与实时调试控制台，不写日志文件、不进 critical 上下文；需要落盘的信息一律用 `Info`/`Warn`/`Error` |
 
 ### 调试与诊断
 
@@ -97,6 +96,7 @@ This file provides guidance to AI coding agents (DeepSeek Harness / dsh, etc.) w
 - 命名：函数/方法/全局变量/静态变量大驼峰 `CheckVersion()`，局部变量小驼峰 `gameProcess`，常量全大写 `MAX_RETRY`
 - Commit 遵循 Conventional Commits `feat(scope): subject`，subject 用中文；scope 与模块文件名一致（如 `game_keys`）。**测试清单例外**：scope 用 `test`、类型用 `docs`（如 `docs(test):`）
 - 分支命名 `feat/描述`、`fix/描述`、`ui/描述` 等；PR 目标分支为 `develop`（非 main）
+- 不要在代码里留过程性注释、判断性说明注释、修改原因注释、历史说明注释、文档指向注释，这些应该进[docs/design](docs/design)而不是放在注释里
 
 ## 版本号
 

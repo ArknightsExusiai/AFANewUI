@@ -1,19 +1,8 @@
 ; == 自替换器 ==
 ; 用于在程序退出后替换自身的exe文件
-;
-; #283（v1.9.3+）批处理改为双层结构，规避“cmd 内部 chcp 65001 重读同一文件导致中文行错位”：
-; - update_replacer.bat（主脚本）：内容纯 ASCII（内嵌英文默认文案），chcp 后的重读不会错位；
-; - update_replacer_text.bat（文案子脚本，仅 zh-Hans/zh-Hant 生成）：UTF-8 中文，由主脚本在
-;   chcp 65001 生效后 call 从头读入，规避“同一文件 chcp 后重读”的触发条件（AGENTS.md 陷阱）。
-; 等待逻辑改按精确 PID 匹配（不再按镜像名模糊匹配），10s 超时 + 5s 心跳：
-; 失败日志可区分“仍在等待 / 已检测到退出 / 进入替换后失败”。
 
 class SelfReplacer {
-    ; 创建替换脚本并执行
-    ; params: 包含以下字段的对象
-    ; - newFilePath: 新exe文件的完整路径
-    ; - currentExePath: 当前运行的exe路径（可选，默认A_ScriptFullPath）
-    ; - backupOldVersion: 是否备份旧版本（可选，默认true）
+    ; 创建替换脚本并执行；params: {newFilePath, currentExePath?, backupOldVersion?}
     static ExecuteReplacement(params) {
         newFilePath := params.newFilePath
         currentExePath := params.HasProp("currentExePath") ? params.currentExePath : A_ScriptFullPath
@@ -29,7 +18,7 @@ class SelfReplacer {
             }
         }
 
-        ; 生成批处理脚本路径
+        ; 批处理脚本路径
         tempDir := A_Temp "\ArknightsFrameAssistant"
         if !DirExist(tempDir)
             DirCreate(tempDir)
@@ -45,12 +34,10 @@ class SelfReplacer {
             backupPath := tempDir "\" backupName
         }
 
-        ; #283：嵌入精确 PID 与 ASCII 起始时间，批处理按 PID 等待退出
         currentPid := DllCall("GetCurrentProcessId", "UInt")
         startedAt := FormatTime(, "yyyy-MM-dd HH:mm:ss")
         updateLogFile := Logger.GetLogDirectory() "\update-" A_Now "-" Random(1000, 9999) ".log"
 
-        ; 扫描并收集所有残留的备份文件（供清理）
         oldBackups := []
         loop files tempDir "\AFA_*_backup.exe" {
             if (A_LoopFileFullPath != backupPath) {
@@ -58,7 +45,6 @@ class SelfReplacer {
             }
         }
 
-        ; 主脚本：纯 ASCII + 英文默认文案（始终写盘）
         mainContent := this._GenerateMainBatch({
             newFilePath: newFilePath,
             currentExePath: currentExePath,
@@ -72,26 +58,26 @@ class SelfReplacer {
             startedAt: startedAt
         })
 
-        ; 文案子脚本：仅 zh-Hans/zh-Hant 生成（UTF-8 中文）；ja-JP/ko-KR/en-US 用主脚本英文默认值
+        ; 文案子脚本仅 zh-Hans/zh-Hant 生成，其余语言用主脚本的 ASCII 英文默认值
         textContent := this._GenerateTextBatch({
             backupName: backupName,
             oldBackups: oldBackups
         })
 
-        ; 写入批处理文件（UTF-8；主脚本内容为纯 ASCII；子脚本仅 zh 生成）
+        ; 写入批处理文件
         try {
             if !DirExist(tempDir)
                 DirCreate(tempDir)
             if FileExist(mainBatch)
                 FileDelete(mainBatch)
             FileAppend(mainContent, mainBatch, "`n UTF-8-RAW")
-            ; 先清旧子脚本再决定是否写入，避免上次 zh 会话残留被子脚本缺失场景误用
+            ; 先删旧子脚本再决定是否写入，避免上次 zh 会话的残留被误用
             if FileExist(textBatch)
                 FileDelete(textBatch)
             if (textContent != "")
                 FileAppend(textContent, textBatch, "`n UTF-8-RAW")
         } catch Error as e {
-            ; #283 审查回复（PR #304）：写盘失败时清理批处理文件，避免异常路径留下半成品
+            ; 不能用 CleanupAll()：它递归清空临时目录，会连带删掉已下载的更新文件与历史备份
             if FileExist(mainBatch)
                 FileDelete(mainBatch)
             if FileExist(textBatch)
@@ -103,24 +89,19 @@ class SelfReplacer {
             }
         }
 
-        ; #285：AFA 调试控制台由 AllocConsole 创建。若带着该控制台 Run cmd.exe，
-        ; cmd 会附加到同一控制台，AFA 退出时的 [Shutdown] 日志会混入更新窗口。
-        ; 先关闭控制台，让批处理自建独立控制台窗口。
+        ; 带着 AFA 的调试控制台 Run cmd.exe 会让 cmd 附加到同一控制台，退出日志混入更新窗口
         hadDebugConsole := Logger.ConsoleEnabled
         if (hadDebugConsole) {
             Logger.Info("SelfReplacer", "启动更新脚本前关闭调试控制台，避免退出日志混入更新窗口")
             Logger.CloseConsole()
         }
 
-        ; 启动批处理脚本（可见窗口，用户可看到更新进度）
+        ; 启动批处理脚本
         try {
             Run mainBatch
         } catch Error as e {
-            ; 启动失败时恢复调试控制台，避免用户丢失实时日志
             if (hadDebugConsole)
                 Logger.SetConsoleEnabled(true)
-            ; 仅清理两个批处理文件；不能用 CleanupAll()——它会递归清空临时目录，
-            ; 连带删除已下载的更新文件与历史备份，破坏失败后重试/手动处理路径
             if FileExist(mainBatch)
                 FileDelete(mainBatch)
             if FileExist(textBatch)
@@ -132,7 +113,7 @@ class SelfReplacer {
             }
         }
 
-        ; 延迟后退出当前程序（给批处理时间启动）
+        ; 延迟退出，给批处理留启动时间
         SetTimer(() => ExitApp(), -500)
 
         return {
@@ -142,7 +123,7 @@ class SelfReplacer {
         }
     }
 
-    ; 生成主批处理脚本内容（纯 ASCII；中文文案一律由文案子脚本覆盖，子脚本缺失时用英文默认值）
+    ; 主脚本：纯 ASCII + 英文默认文案，始终写盘（cmd 在 chcp 65001 后重读同一文件会让中文行错位）
     static _GenerateMainBatch(params) {
         newFilePath := params.newFilePath
         currentExePath := params.currentExePath
@@ -155,7 +136,6 @@ class SelfReplacer {
         currentPid := params.currentPid
         startedAt := params.startedAt
 
-        ; 英文默认文案（纯 ASCII；zh 由文案子脚本覆盖）
         msgs := this._BuildBatchMessages("en", backupName, oldBackups)
 
         ; 使用文本块方式构建批处理脚本
@@ -165,7 +145,6 @@ class SelfReplacer {
         lines.Push("chcp 65001 >nul")
         lines.Push("set `"START_TS=" startedAt "`"")
 
-        ; 英文默认文案（zh-Hans/zh-Hant 由文案子脚本 call 覆盖）
         for name, value in msgs {
             lines.Push("set `"" name "=" value "`"")
         }
@@ -174,18 +153,16 @@ class SelfReplacer {
         lines.Push("set `"LOG_FILE=" logFile "`"")
         lines.Push("if not exist `"" logDirectory "`" mkdir `"" logDirectory "`"")
 
-        ; 可选中文文案子脚本：chcp 65001 已生效，call 将从文件头按 UTF-8 读取，规避重读错位
+        ; chcp 生效后再 call 子脚本，从头按 UTF-8 读取它
         lines.Push("if exist `"" textBatch "`" call `"" textBatch "`"")
 
         lines.Push("title %MSG_TITLE%")
         lines.Push("echo [%START_TS%] %MSG_START% >> `"%LOG_FILE%`"")
         lines.Push("echo %MSG_WAITING% >> `"%LOG_FILE%`"")
         lines.Push("echo %MSG_WAITING%")
-
-        ; 求饶彩蛋（仅 zh 子脚本定义 MSG_RITUAL 时显示；用延迟展开避免值中的括号破坏 if 块）
         lines.Push("if defined MSG_RITUAL (")
         lines.Push("    echo !MSG_RITUAL!")
-        ; AHK v2 无 1..5 范围运算符（会解析为对 Float 取属性 "5" 而运行时报错），用 loop + A_Index
+        ; AHK v2 没有 1..5 范围运算符，用 loop + A_Index
         loop 5 {
             lines.Push("    echo !MSG_PLEAD" A_Index "!")
         }
@@ -194,7 +171,7 @@ class SelfReplacer {
         lines.Push("    echo.")
         lines.Push(")")
 
-        ; 等待循环：按精确 PID 判断 AFA 是否退出（不再按镜像名模糊匹配），10s 超时 + 5s 心跳
+        ; 按精确 PID 轮询等待 AFA 退出（10s 超时 / 5s 心跳）
         lines.Push("set wait_count=0")
         lines.Push(":wait_loop")
         lines.Push("timeout /t 1 /nobreak >nul")
@@ -210,7 +187,7 @@ class SelfReplacer {
         lines.Push("echo [!time!] !MSG_EXITED! - PID " currentPid " >> `"%LOG_FILE%`"")
         lines.Push("echo !MSG_EXITED!")
 
-        ; 继续更新
+        ; 开始替换：备份 → 删除原文件 → 复制新文件 → 校验
         lines.Push(":continue_update")
         lines.Push("echo !MSG_REPLACING! >> `"%LOG_FILE%`"")
         lines.Push("echo !MSG_REPLACING!")
@@ -292,7 +269,7 @@ class SelfReplacer {
             lines.Push("    )")
             lines.Push(")")
         }
-        ; 提示用户失败的可能原因（指向新文件：下载的更新文件被删除/损坏，而非原文件）
+        ; 提示用户失败的可能原因
         lines.Push("echo [!time!] !MSG_DOWNLOAD_HINT! >> `"%LOG_FILE%`"")
         lines.Push("echo !MSG_DOWNLOAD_HINT!")
         if (backupPath != "") {
@@ -311,7 +288,7 @@ class SelfReplacer {
         lines.Push("echo [!time!] !MSG_CLEANUP! >> `"%LOG_FILE%`"")
         lines.Push("echo !MSG_CLEANUP!")
 
-        ; 先关闭日志文件句柄（通过复制到新日志然后切换）
+        ; 先关闭日志文件句柄
         lines.Push("set final_log=%LOG_FILE%.final")
         lines.Push("copy /Y `"%LOG_FILE%`" `"%final_log%`" >nul 2>&1")
 
@@ -375,7 +352,7 @@ class SelfReplacer {
         return script
     }
 
-    ; 生成中文文案子脚本（仅 zh-Hans/zh-Hant；由主脚本在 chcp 65001 生效后 call，从头按 UTF-8 读取）
+    ; 生成中文文案子脚本（仅 zh-Hans/zh-Hant）
     static _GenerateTextBatch(params) {
         current := I18n.GetCurrent()
         if (current != "zh-Hans" && current != "zh-Hant")
@@ -385,13 +362,14 @@ class SelfReplacer {
         oldBackups := params.HasProp("oldBackups") ? params.oldBackups : []
         msgs := this._BuildBatchMessages("zh", backupName, oldBackups)
 
-        ; 每行以 ASCII 双引号结尾，规避 chcp 重读时行尾多字节吞换行（AGENTS.md 陷阱）
+        ; 每行以 ASCII 双引号结尾，规避 chcp 重读时行尾多字节吞换行
         lines := []
+        ; 文案以 set 变量注入，脚本运行时用 %VAR% / !VAR! 引用
         for name, value in msgs {
             lines.Push("set `"" name "=" value "`"")
         }
 
-        ; zh 专属求饶彩蛋（主脚本以 if defined MSG_RITUAL 判断显示；其余语言不生成子脚本）
+        ; 求饶
         lines.Push("set `"MSG_RITUAL=" I18n.T("(正在施展阿梅利亚神秘仪式)") "`"")
         lines.Push("set `"MSG_PLEAD1=求求你了360安全卫士放过我 求求你了360杀毒放过我 求求你了腾讯电脑管家放过我 求求你了火绒安全软件放过我...`"")
         lines.Push("set `"MSG_PLEAD2=求求你了金山毒霸放过我 求求你了瑞星杀毒软件放过我 求求你了联想电脑管家放过我 求求你了华为电脑管家放过我...`"")
@@ -408,9 +386,7 @@ class SelfReplacer {
         return script
     }
 
-    ; 构建批处理文案 Map（变量名 → 值）
-    ; mode="zh"：经 I18n.T 取当前语言（生成文案子脚本用，仅 zh-Hans/zh-Hant）；
-    ; mode="en"：英文默认值（主脚本内嵌，纯 ASCII；子脚本缺失/其它语言时生效）。
+    ; 构建批处理文案 Map（变量名 → 值）：zh 经 I18n.T 取当前语言，en 为纯 ASCII 英文默认值
     static _BuildBatchMessages(mode, backupName, oldBackups) {
         zh := (mode = "zh")
         msgs := Map()
@@ -426,7 +402,6 @@ class SelfReplacer {
         msgs["MSG_FAILED"] := zh ? I18n.T("替换失败，正在尝试自动还原原文件...") : "Replacement failed, attempting to restore..."
         msgs["MSG_DONE"] := zh ? I18n.T("更新流程结束") : "Update finished"
         msgs["MSG_BACKUP_FAILED"] := zh ? I18n.T("备份原文件失败") : "Backing up original file failed"
-        ; 备份名在生成期已知，直接烘入值
         msgs["MSG_BACKUPED"] := zh ? I18n.T("原文件已备份为 {1}", backupName) : Format("Original file backed up as {1}", backupName)
         msgs["MSG_DELETED"] := zh ? I18n.T("原文件已删除") : "Original file deleted"
         msgs["MSG_COPIED"] := zh ? I18n.T("新文件复制成功") : "New file copied"
@@ -442,7 +417,6 @@ class SelfReplacer {
         msgs["MSG_BACKUP_DELETED"] := zh ? I18n.T("备份文件已删除") : "Backup file deleted"
         msgs["MSG_CLEANUP_BACKUP_FAILED"] := zh ? I18n.T("清理备份文件失败（文件仍被占用）") : "Cleaning backup file failed (file still in use)"
 
-        ; 含运行时占位符的文案拆两段（错误码/重试次数），批处理运行时用 !var! 组合
         delFailed := this._SplitBatchText(zh,
             "删除原文件失败（错误码: %del_result%）", "%del_result%",
             "Delete original file failed (error code: %del_result%)")
@@ -459,7 +433,6 @@ class SelfReplacer {
         msgs["MSG_RETRY"] := retryText[1]
         msgs["MSG_RETRY_TAIL"] := retryText[2]
 
-        ; 旧备份路径在生成期已知，直接烘入值
         for i, oldBackup in oldBackups {
             msgs["MSG_OLDBACKUP_DELETED_" i] := zh
                 ? I18n.T("清理旧备份文件 {1}", oldBackup)
@@ -468,8 +441,7 @@ class SelfReplacer {
         return msgs
     }
 
-    ; 按运行时占位符拆分批处理文案（zh 用 I18n.T 结果 / en 用给定英文模板）
-    ; 返回数组 [前半, 后半]（若占位符缺失则整体作为前半）
+    ; 按占位符拆分批处理文案（zh 走 I18n.T / en 用模板）；返回 [前半, 后半]，缺失占位符时整体为前半
     static _SplitBatchText(zhMode, key, placeholder, enTemplate) {
         full := zhMode ? I18n.T(key) : enTemplate
         idx := InStr(full, placeholder)

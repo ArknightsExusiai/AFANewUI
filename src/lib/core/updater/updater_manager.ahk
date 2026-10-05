@@ -132,23 +132,23 @@ class Updater {
         })
     }
 
-    ; 下载入口（含同源重试 + 降级备选源）
+    ; 下载入口
     static DownloadWithAltSource(params, triedFallback := false) {
         this._TryDownload(params, triedFallback)
     }
 
-    ; 内部：执行单次下载（在新线程中）
+    ; 内部：执行单次下载
     static _ExecuteDownloadAttempt(downloadParams) {
         UpdateDownloader.Download(downloadParams)
     }
 
     ; 内部：带重试的单源下载
-    ; reason: 上次失败的简要原因（透传给 UI 展示）
+    ; reason: 上次失败的简要原因
     static _TryDownload(params, triedFallback, retryCount := 0, reason := "") {
         EventBus.Publish("UpdateDownloadStarted", {retryCount: retryCount, reason: reason})
 
         ; downloadParams 结构约定：{downloadUrl, expectedHash, localVersion, remoteVersion, ...}
-        ; expectedHash：下载文件的期望 SHA-256（hex，小写；为空时跳过校验）
+        ; expectedHash：下载文件的期望 SHA-256
         downloadParams := {
             downloadUrl: params.downloadUrl,
             localVersion: params.localVersion,
@@ -174,10 +174,9 @@ class Updater {
             return
         }
 
-        ; 同源重试（把失败原因传给 UI 展示，让用户知道为什么重试）
+        ; 同源重试
         if (retryCount < this.DownloadRetries - 1) {
             Sleep(this.DownloadRetryDelay)
-            ; 优先用不含"下载失败:"前缀的原始原因，避免 UI 重复显示
             reason := error.HasProp("reason") ? error.reason : error.message
             EventBus.Publish("UpdateDownloadRetryScheduled", {retryCount: retryCount + 1, reason: reason})
             this._TryDownload(params, triedFallback, retryCount + 1, reason)
@@ -186,7 +185,6 @@ class Updater {
 
         ; 同源重试耗尽，尝试降级备选源
         if (!triedFallback) {
-            ; 降级检查期间更新下载窗口提示，避免用户误以为更新静默失败
             EventBus.Publish("UpdateFallbackNotice")
             fallbackInfo := this._GetFallbackDownloadInfo(params)
             if (fallbackInfo.downloadUrl != "") {
@@ -269,7 +267,7 @@ class Updater {
     ; 处理忽略此版本
     static HandleUpdateIgnored(data) {
         Logger.Info("Updater", "用户忽略版本 " data.remoteVersion " 的更新提示")
-        ; 记录忽略的版本号（单键写入，不触碰其他未保存设置）
+        ; 记录忽略的版本号
         saveResult := SettingsService.UpdatePersistedValue("LastDismissedVersion", data.remoteVersion)
 
         ; 显示提示

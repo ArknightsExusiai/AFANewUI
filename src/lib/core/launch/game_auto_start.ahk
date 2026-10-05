@@ -1,11 +1,8 @@
 ; == 随游戏自动启动AFA ==
 
 class GameAutoStartManager {
-    ; Windows 安全审核“进程创建”子类别 GUID
     static ProcessCreationAuditGuid := "{0CCE922B-69AE-11D9-BED3-505054503030}"
     static TaskNamePrefix := "ArknightsFrameAssistant-AutoStartWithGame-"
-    ; SYSTEM 账户 SID：启动器/游戏服务可能在系统上下文拉起游戏进程，
-    ; 4688 事件的 SubjectUserSid 会是 S-1-5-18，仅匹配用户 SID 会导致事件过滤器永不命中
     static SystemSid := "S-1-5-18"
     static ERROR_ACCESS_DENIED := 5
     static ERROR_NOT_ALL_ASSIGNED := 1300
@@ -36,7 +33,7 @@ class GameAutoStartManager {
         return {success: true, path: normalizedPath}
     }
 
-    ; 转换为绝对路径，确保事件过滤器与 Windows 记录的完整进程路径一致
+    ; 转绝对路径
     static _NormalizePath(path) {
         requiredSize := DllCall("Kernel32\GetFullPathNameW", "Str", path, "UInt", 0, "Ptr", 0, "Ptr", 0, "UInt")
         if (requiredSize <= 0)
@@ -49,7 +46,7 @@ class GameAutoStartManager {
         return StrGet(pathBuffer, "UTF-16")
     }
 
-    ; 展开 8.3 短路径并采用文件系统返回的名称形式，减少精确匹配差异
+    ; 展开 8.3 短路径
     static _GetLongPath(path) {
         requiredSize := DllCall("Kernel32\GetLongPathNameW", "Str", path, "Ptr", 0, "UInt", 0, "UInt")
         if (requiredSize <= 0)
@@ -62,23 +59,15 @@ class GameAutoStartManager {
         return StrGet(pathBuffer, "UTF-16")
     }
 
-    ; 解析 reparse point（junction/符号链接）到文件系统的最终目标路径。
-    ; 返回真实安装路径的盘符形式（win32 路径）；dwFlags=2 时返回 NT 设备路径形式
-    ; GetFullPathNameW/GetLongPathNameW 都不解析 reparse point，而 Security 4688 的
-    ; NewProcessName 记录的是内核解析后的路径。配置路径带 junction 前缀或与真实路径
-    ; 存在大小写/短名差异时，精确匹配会永远失败。失败返回 ""，由调用方回退到配置路径变体。
+    ; 解析 reparse point 到最终目标路径（dwFlags=2 取 NT 设备路径形式）
     static _ResolveFinalPath(path, dwFlags := 0) {
         if (path = "")
             return ""
-        ; FILE_READ_ATTRIBUTES(0x80) + 共享读写删(0x7) + OPEN_EXISTING(3)
-        ; 不带 FILE_FLAG_OPEN_REPARSE_POINT：GetFinalPathNameByHandle 返回最终目标路径
         handle := DllCall("Kernel32\CreateFileW", "WStr", path, "UInt", 0x80, "UInt", 0x7,
             "Ptr", 0, "UInt", 3, "UInt", 0, "Ptr", 0, "Ptr")
         if (handle = -1)
             return ""
         try {
-            ; dwFlags=0 => FILE_NAME_NORMALIZED | VOLUME_NAME_DOS
-            ; dwFlags=2 => FILE_NAME_NORMALIZED | VOLUME_NAME_NT
             required := DllCall("Kernel32\GetFinalPathNameByHandleW", "Ptr", handle, "Ptr", 0, "UInt", 0, "UInt", dwFlags, "UInt")
             if (required <= 0)
                 return ""
@@ -88,7 +77,6 @@ class GameAutoStartManager {
             if (resultSize = 0 || resultSize > required)
                 return ""
             resolved := StrGet(pathBuffer, "UTF-16")
-            ; 去掉 VOLUME_NAME_DOS 产生的 \\?\ 前缀（NT 形式无此前缀，不匹配则原样返回）
             if RegExMatch(resolved, "^\\\\\?\\", &m)
                 resolved := SubStr(resolved, m.Len[0] + 1)
             return resolved
@@ -97,7 +85,7 @@ class GameAutoStartManager {
         }
     }
 
-    ; 根据设置应用外部自动启动状态。gamePath 可为单个路径或路径数组。
+    ; 根据设置应用外部自动启动状态
     static Apply(enabled, gamePath := "") {
         if (enabled) {
             paths := this._AsPathArray(gamePath)
@@ -115,7 +103,7 @@ class GameAutoStartManager {
         return this.Disable()
     }
 
-    ; 获取当前配置的全部游戏路径（GamePath + 各区服 GamePath*），用于随游戏自启
+    ; 获取当前配置的全部游戏路径（GamePath + 各区服 GamePath*）
     static GetConfiguredGamePaths() {
         result := []
         seen := Map()
@@ -142,7 +130,7 @@ class GameAutoStartManager {
         return [gamePath]
     }
 
-    ; 启用审核并注册计划任务。gamePaths 可为单个路径或路径数组。
+    ; 启用审核并注册计划任务
     static Enable(gamePaths) {
         paths := this._AsPathArray(gamePaths)
         if (paths.Length = 0)
@@ -167,7 +155,7 @@ class GameAutoStartManager {
         }
     }
 
-    ; 删除计划任务。按方案保留 Windows 进程创建审核开启状态。
+    ; 删除计划任务（保留审核开启状态）
     static Disable() {
         try {
             service := ComObject("Schedule.Service")
@@ -209,7 +197,7 @@ class GameAutoStartManager {
         return this.Disable()
     }
 
-    ; 开启 Windows 进程创建成功审核。仅 1450 进行两次短退避重试。
+    ; 开启进程创建成功审核（仅 1450 短退避重试）
     static EnableProcessCreationAudit() {
         startedAt := A_TickCount
         Loop this.AUDIT_RETRY_DELAYS.Length + 1 {
@@ -228,7 +216,7 @@ class GameAutoStartManager {
         return result
     }
 
-    ; 在一个短事务内启用权限、查询/按需设置审核，并恢复令牌原状态。
+    ; 在短事务内启用权限、查询/按需设置审核，并恢复令牌原状态
     static _RunAuditTransaction() {
         privilegeResult := this._EnableSecurityAuditPrivilege()
         if (!privilegeResult.success)
@@ -252,7 +240,7 @@ class GameAutoStartManager {
                 return this._Result(true, {stage: "audit_query", reason: "already_enabled",
                     skipped: true, message: I18n.T("进程创建审核已启用。")})
 
-            ; AUDIT_POLICY_INFORMATION = SubCategoryGuid(16) + AuditingInformation(4) + CategoryGuid(16)
+            ; 结构：SubCategoryGuid(16) + AuditingInformation(4) + CategoryGuid(16)
             policyInfo := Buffer(36, 0)
             Loop 16
                 NumPut("UChar", NumGet(subCategoryGuid, A_Index - 1, "UChar"), policyInfo, A_Index - 1)
@@ -302,7 +290,7 @@ class GameAutoStartManager {
         }
     }
 
-    ; 为当前管理员令牌显式启用“管理审核和安全日志”用户权利。
+    ; 为当前管理员令牌启用「管理审核和安全日志」权利
     static _EnableSecurityAuditPrivilege() {
         tokenHandle := 0
         keepHandle := false
@@ -396,7 +384,7 @@ class GameAutoStartManager {
             reason: reason, errorCode: errorCode, message: message})
     }
 
-    ; 计划任务语义一致时不重写；仅缺失或关键字段漂移时更新。gamePaths 为路径数组。
+    ; 计划任务语义一致时不重写
     static EnsureTask(gamePaths) {
         paths := this._AsPathArray(gamePaths)
         if (paths.Length = 0)
@@ -449,7 +437,6 @@ class GameAutoStartManager {
         settings.ExecutionTimeLimit := "PT0S"
 
         principal := taskDefinition.Principal
-        ; 任务主体使用 SAM 兼容格式的账户名；SID 仅用于事件过滤和任务隔离。
         principal.UserId := accountName
         principal.LogonType := 3
         principal.RunLevel := 1
@@ -468,8 +455,7 @@ class GameAutoStartManager {
         }
         action.WorkingDirectory := A_ScriptDir
 
-        ; 6 = TASK_CREATE_OR_UPDATE，3 = TASK_LOGON_INTERACTIVE_TOKEN。
-        ; 交互式令牌使用任务定义中的主体，不向注册接口传递用户名或密码。
+        ; 6=TASK_CREATE_OR_UPDATE、3=TASK_LOGON_INTERACTIVE_TOKEN，不传用户名或密码
         return taskDefinition
     }
 
@@ -483,11 +469,17 @@ class GameAutoStartManager {
                 || existing.Settings.MultipleInstances != desired.Settings.MultipleInstances
                 || existing.Settings.ExecutionTimeLimit != desired.Settings.ExecutionTimeLimit)
                 return this._TaskMismatch("settings")
-            existingPrincipalId := StrLower(existing.Principal.UserId)
-            desiredPrincipalId := StrLower(desired.Principal.UserId)
             expectedSid := StrLower(userSid)
-            if !this._IsSamePrincipalUserId(existingPrincipalId, desiredPrincipalId, expectedSid)
-                return this._TaskMismatch("principal_user")
+            existingPrincipalSid := StrLower(this._ReadPrincipalSid(existing))
+            if (StrLen(existingPrincipalSid) > 0) {
+                if (existingPrincipalSid != expectedSid)
+                    return this._TaskMismatch("principal_user")
+            } else {
+                existingPrincipalId := StrLower(existing.Principal.UserId)
+                desiredPrincipalId := StrLower(desired.Principal.UserId)
+                if !this._IsSamePrincipalUserId(existingPrincipalId, desiredPrincipalId, expectedSid)
+                    return this._TaskMismatch("principal_user")
+            }
             if (existing.Principal.LogonType != desired.Principal.LogonType)
                 return this._TaskMismatch("principal_logon_type")
             if (existing.Principal.RunLevel != desired.Principal.RunLevel)
@@ -518,6 +510,16 @@ class GameAutoStartManager {
         return false
     }
 
+    ; 从任务定义 XML 读取主体 SID，读不到返回空串
+    static _ReadPrincipalSid(definition) {
+        try xmlText := definition.XmlText
+        catch
+            return ""
+        if RegExMatch(xmlText, "i)<UserId>\s*(S-1-[0-9-]+)\s*</UserId>", &match)
+            return match[1]
+        return ""
+    }
+
     static _IsSamePrincipalUserId(existingId, desiredId, expectedSid) {
         if (existingId = desiredId || existingId = expectedSid)
             return true
@@ -525,13 +527,22 @@ class GameAutoStartManager {
         return (resolvedSid != "" && StrLower(resolvedSid) = expectedSid)
     }
 
-    ; Task Scheduler 读取任务时可能把 DOMAIN\User 规范化为 User；统一解析到 SID 后比较。
+    ; 账户名统一解析到 SID 后比较
     static _ResolveAccountSid(accountName) {
         if (accountName = "")
             return ""
         if RegExMatch(accountName, "i)^S-1-")
             return accountName
+        if !InStr(accountName, "\") {
+            localSid := this._LookupUserSid(A_ComputerName "\" accountName)
+            if (StrLen(localSid) > 0)
+                return localSid
+        }
+        return this._LookupUserSid(accountName)
+    }
 
+    ; 按账户名查询 SID，仅接受用户类型账户
+    static _LookupUserSid(accountName) {
         sidSize := 0
         domainSize := 0
         sidUse := 0
@@ -546,6 +557,8 @@ class GameAutoStartManager {
         if !DllCall("Advapi32\LookupAccountNameW",
             "Ptr", 0, "WStr", accountName, "Ptr", sidBuffer, "UInt*", &sidSize,
             "Ptr", domainBuffer, "UInt*", &domainSize, "UInt*", &sidUse, "Int")
+            return ""
+        if (sidUse != 1)
             return ""
 
         stringSidPointer := 0
@@ -566,7 +579,7 @@ class GameAutoStartManager {
         return result
     }
 
-    ; Task Scheduler COM 错误通常是普通 Error，错误码只出现在 Message 的 HRESULT 中。
+    ; 从 Task Scheduler COM 错误中取出 Win32 错误码
     static _GetWin32ErrorCode(error) {
         if (error.HasProp("Number"))
             return error.Number & 0xFFFF
@@ -581,7 +594,7 @@ class GameAutoStartManager {
         return this.TaskNamePrefix userSid
     }
 
-    ; 获取当前用户的 SAM 兼容账户名（例如 DOMAIN\User）
+    ; 当前用户的 SAM 兼容账户名（DOMAIN\User）
     static GetCurrentUserName() {
         nameFormat := 2 ; NameSamCompatible
         nameLength := 0
@@ -595,17 +608,7 @@ class GameAutoStartManager {
         return StrGet(nameBuffer, "UTF-16")
     }
 
-    ; 生成安全日志事件订阅。使用一个或多个完整路径和用户 SID，避免误触发。
-    ; 多个路径在同一个 Select 内用 or 连接，保持单 trigger（Triggers.Count == 1）。
-    ; 三个加固点：
-    ;   1. 路径同时注册「配置路径」「盘符形式真实路径」「NT 设备路径」三个变体：
-    ;      GetFullPathNameW/GetLongPathNameW 不解析 reparse point（junction/符号链接），
-    ;      而 Security 4688 的 NewProcessName 记录的是内核解析后的路径；部分环境（如
-    ;      提权启动器拉起游戏）记录的是 NT 设备路径而非
-    ;      盘符路径，两种形式的精确匹配都会永久失配。
-    ;   2. SubjectUserSid 同时匹配当前用户与 SYSTEM（S-1-5-18）：Hypergryph Launcher
-    ;      可能由系统上下文服务拉起游戏进程，此时事件里的 SubjectUserSid 是 SYSTEM，
-    ;      仅匹配用户 SID 会导致事件过滤器永不命中。
+    ; 生成安全日志事件订阅（多路径在同一 Select 内用 or 连接，单 trigger）
     static BuildEventSubscription(gamePaths, userSid) {
         paths := this._AsPathArray(gamePaths)
         if (paths.Length = 0)
@@ -614,7 +617,6 @@ class GameAutoStartManager {
         escapedSystemSid := this.EscapeXml(this.SystemSid)
         pathConditions := []
         for gamePath in paths {
-            ; 配置路径 + 盘符真实路径 + NT 设备路径三个变体（按原样去重；大小写差异保留为独立变体以覆盖事件记录差异）
             variants := Map()
             variants[gamePath] := true
             canonicalPath := this._ResolveFinalPath(gamePath, 0)
@@ -646,7 +648,7 @@ class GameAutoStartManager {
         return subscription
     }
 
-    ; XML 文本转义。Windows 文件名不能包含双引号，因此 XPath 可使用双引号包裹路径。
+    ; XML 转义：Windows 文件名不含双引号，因此 XPath 可用双引号包裹路径
     static EscapeXml(value) {
         value := StrReplace(value, "&", "&amp;")
         value := StrReplace(value, "<", "&lt;")

@@ -19,8 +19,7 @@ class KeyBinder {
         this.ModifyHook.OnKeyUp := (ih, vk, sc) => this.OnKeyUp(ih, vk, sc)
         this.ModifyHook.OnEnd := (*) => this.EndChange(this.ModifyHook.EndMods . this.ReleaseKey . this.ModifyHook.EndKey)
         this.ModifyHook.Start()
-        ; 录制会话开始：注册鼠标/滚轮录制热键（仅录制期间存在；常驻会让每次物理滚轮
-        ; 波动都进入 AFA 钩子匹配，徒增输入管线开销）
+        ; 录制会话开始：注册鼠标/滚轮录制热键
         this.StartRecordHotkeys()
     }
     ; 释放Hook
@@ -107,21 +106,17 @@ class KeyBinder {
         EventBus.Publish("HotkeyBindingsChanged")
     }
 
-    ; 启动按键绑定：注册窗口鼠标监听、设置保存前订阅（原为文件末尾顶层副作用）
-    ; 注意：鼠标/滚轮录制热键不在此注册——仅在录制会话（CreateHook/StopHook）期间存在，
-    ; 避免物理滚轮事件在非录制时也进入 AFA 钩子匹配，徒增输入管线开销。
+    ; 启动按键绑定
     static Start() {
         OnMessage(0x0201, WM_LBUTTONDOWN)
         EventBus.Subscribe("SettingsSaveStarting", KeyBinder.HandleSettingsSaveStarting)
     }
 
-    ; 鼠标录制热键注册状态（录制会话外不注册，非录制期的滚轮/鼠标事件不进入 AFA 钩子匹配）
+    ; 鼠标录制热键注册状态
     static _RecordHotkeysOn := false
-    ; 录制条件唯一实例——HotIf/Hotkey 的注册与注销按条件对象区分变体，
-    ; 必须用同一对象（每次新建箭头函数会导致注销不到（Hotkey 无此变体，抛 TargetError））
     static _RecordGate := (*) => KeyBinder.WaitingModify
 
-    ; 录制会话开始：注册鼠标/滚轮/Alt 录制热键（HotIf 门控 WaitingModify，语义与原常驻注册完全一致）
+    ; 录制会话开始
     static StartRecordHotkeys() {
         if (this._RecordHotkeysOn)
             return
@@ -155,14 +150,14 @@ class KeyBinder {
         this._RecordHotkeysOn := false
     }
 
-    ; 鼠标录制热键回调（原 #HotIf 块内的鼠标键/滚轮处理）
+    ; 鼠标录制热键回调
     static HandleModifyMouseHotkey(ThisHotkey) {
         pureKey := RegExReplace(ThisHotkey, "^[~*$!^+#&<>()]+")
         KeyBinder.ModifyHook.OnEnd := (*) => KeyBinder.EndChange(KeyBinder.ModifyHook.EndMods . pureKey)
         KeyBinder.ModifyHook.Stop()
     }
 
-    ; 避免触发 GUI 菜单导致卡死（原 ~LAlt/~RAlt 热键）
+    ; 避免触发 GUI 菜单导致卡死
     static HandleModifyAlt(ThisHotkey) {
         Send "{Blind}{vkE8}"
     }
@@ -183,7 +178,7 @@ WM_LBUTTONDOWN(wParam, lParam, msg, hwnd) {
             if (GuiManager.MainGui = "" || KeyBinder.ControlObj.Gui.Hwnd != GuiManager.MainGui.Hwnd)
                 return
         }
-        ; 排除非按键绑定输入框（使用Set查找，新增时只需加一行）
+        ; 排除非按键绑定输入框
         static nonKeybindEdits := Map(
             "GitHubToken", 1,
             "GamePath", 1,
@@ -241,7 +236,7 @@ WM_LBUTTONDOWN(wParam, lParam, msg, hwnd) {
             ; 释放可能存在的Hook
             KeyBinder.StopHook()
         }
-        ; 点击非Edit区域时聚焦取消按钮，取消普通Edit控件的选中状态（MainGui 未初始化时不处理）
+        ; 点击非Edit区域时聚焦取消按钮，取消普通Edit控件的选中状态
         if (GuiManager.MainGui != "" && hwnd = GuiManager.MainGui.Hwnd)
             GuiManager.FocusCancelButton()
         return

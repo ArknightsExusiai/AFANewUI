@@ -1,5 +1,5 @@
 ; == GitHub Token 保护 ==
-; 使用 Windows DPAPI CurrentUser 保护配置文件中的 Token。
+; 使用 Windows DPAPI CurrentUser 保护配置文件中的 Token
 
 class TokenProtector {
     static STORAGE_PREFIX := "dpapi:v1:"
@@ -7,7 +7,7 @@ class TokenProtector {
     static BLOB_SIZE := A_PtrSize * 2
     static BASE64_FLAGS := 0x40000001 ; CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF
 
-    ; 保护明文 Token，返回可写入 INI 的字符串。
+    ; 保护明文 Token，返回可写入 INI 的字符串
     static Protect(plainToken) {
         if (plainToken = "")
             return {success: true, storedValue: "", message: ""}
@@ -53,7 +53,7 @@ class TokenProtector {
         }
     }
 
-    ; 解密 INI 中的 Token。无前缀值视为旧版明文，供迁移流程使用。
+    ; 解密 INI 中的 Token。无前缀值视为旧版明文，供迁移流程使用
     static Unprotect(storedValue) {
         if (storedValue = "")
             return {success: true, plainText: "", format: "empty", message: ""}
@@ -105,7 +105,7 @@ class TokenProtector {
         }
     }
 
-    ; 创建 DATA_BLOB。结构为 DWORD cbData + 指针 pbData。
+    ; 创建 DATA_BLOB。结构为 DWORD cbData + 指针 pbData
     static _CreateBlob(dataBuffer, dataSize) {
         blob := Buffer(this.BLOB_SIZE, 0)
         NumPut("UInt", dataSize, blob, 0)
@@ -113,7 +113,7 @@ class TokenProtector {
         return blob
     }
 
-    ; 使用 Crypt32 将二进制数据转换为无换行 Base64。
+    ; 使用 Crypt32 将二进制数据转换为无换行 Base64
     static _Base64Encode(dataPointer, dataSize) {
         characterCount := 0
         if !DllCall("Crypt32\CryptBinaryToStringW"
@@ -141,7 +141,7 @@ class TokenProtector {
         return {success: true, value: StrGet(outputBuffer, characterCount, "UTF-16"), message: ""}
     }
 
-    ; 使用 Crypt32 将 Base64 解码为二进制数据。
+    ; 使用 Crypt32 将 Base64 解码为二进制数据
     static _Base64Decode(encoded) {
         if (encoded = "")
             return this._Failure(I18n.T("Token 加密数据为空。"))
@@ -178,7 +178,6 @@ class TokenProtector {
     }
 
     static _Failure(message) {
-        ; 记录 DPAPI 失败细节（错误码/异常），供排查「GitHub Token 存储异常」——message 不含 Token 明文。
         Logger.Warn("TokenProtector", "Token 保护操作失败：" message)
         return {success: false, storedValue: "", plainText: "", value: "", format: "error", message: message}
     }
@@ -186,7 +185,6 @@ class TokenProtector {
     static _SecureZero(buffer) {
         if !IsObject(buffer) || buffer.Size <= 0
             return
-        ; RtlSecureZeroMemory 是 Windows 宏，不是可直接 DllCall 的导出函数。
         Loop buffer.Size
             NumPut("UChar", 0, buffer, A_Index - 1)
     }

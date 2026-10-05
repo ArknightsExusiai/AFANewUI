@@ -7,7 +7,7 @@ class LogExporter {
     }
 
     static _HandleGameClientsChanged(data) {
-        Logger.Debug("Diagnostics", "游戏客户端集合变化，数量=" data.clients.Length)
+        Logger.Info("Diagnostics", "游戏客户端集合变化，数量=" data.clients.Length)
     }
 
     static CreateArchiveInteractive() {
@@ -120,8 +120,8 @@ class LogExporter {
         for serverId in ServerProfile.Ids()
             lines.Push("RegistryRoot" serverId "=" ServerProfile.RegistryRoot(serverId))
         lines.Push("GeneratedAt=" FormatTime(, "yyyy-MM-dd HH:mm:ss.") A_MSec)
-        ; 日志全级别恒持久化；记录运行时**实际**控制台状态（SetConsoleEnabled 在 AllocConsole 失败时
-        ; 会复位降级，设置的 DebugEnabled 值仅存在于 settings-sanitized.ini 中）
+        ; 记录运行时**实际**控制台状态（SetConsoleEnabled 在 AllocConsole 失败时会复位降级，
+        ; 设置的 DebugEnabled 值仅存在于 settings-sanitized.ini 中）
         lines.Push("DebugConsoleEnabled=" (Logger.ConsoleEnabled ? "true" : "false"))
         ; 环境事实：导出那一刻在跑的全部进程名
         for line in this._BuildProcessListLines()

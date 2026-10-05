@@ -59,7 +59,7 @@
 #Include ../../src/lib/ui/updater_ui.ahk
 #Include ../../src/lib/core/launch/game_launcher.ahk
 #Include ../../src/lib/ui/changelog_ui.ahk
-#Include ../../src/lib/core/changelog/changelog_checker.ahk
+#Include ../../src/lib/core/updater/changelog_checker.ahk
 #Include ../../src/lib/ui/status_bar.ahk
 #Include ../../src/lib/ui/gui.ahk
 #Include ../../src/lib/ui/custom_key_editor.ahk
