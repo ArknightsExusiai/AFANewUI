@@ -57,6 +57,8 @@
 #Include ./lib/ui/changelog_ui.ahk
 #Include ./lib/ui/status_bar.ahk
 #Include ./lib/ui/gui.ahk
+#Include ./lib/ui/ui_shell.ahk
+#Include ./lib/ui/tray_controller.ahk
 #Include ./lib/ui/custom_key_editor.ahk
 #Include ./lib/core/monitor/game_monitor.ahk
 #Include ./lib/core/monitor/hook_monitor.ahk
@@ -195,7 +197,7 @@ class App {
         StartupMark("GUI 初始化")
         EventBus.Publish("ChangelogShowRequested")
 
-        GuiManager.Start()
+        UiShell.Start()
 
         UpdateUI.Init()
 

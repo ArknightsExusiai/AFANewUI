@@ -21,7 +21,7 @@
 6. **加载设置** — `StartupMark("设置加载")`：`SettingsService.Initialize()` 加载配置；`Logger.RegisterSecret()` 注册 Token 与脚本路径；若 `Logger.PreviousAbnormalFile != ""`（上一会话异常退出）则提示导出诊断包。
 7. **随游戏自动启动校准** — `StartupMark("随游戏自动启动校准")`：`AppContext.SetStartedByGameAutoStart()` + `GameAutoStartManager.Reconcile()`；关闭该功能时若返回 `shouldExit` 则只清理任务并退出。
 8. **资源与游戏按键** — `StartupMark("资源提取")` 起，经 `StartupMark("游戏按键识别")`、`StartupMark("热键注册")`：`FileExtractor.EnsureExtracted()` 提取嵌入资源；`GameKeys.Init()`（读注册表游戏按键 + 启动 10s 轮询定时器，**必须在 `HotkeyOn` 之前**）→ `HotkeyService.HotkeyOn()` 激活热键。
-9. **GUI 初始化** — `StartupMark("GUI 初始化")`：发布 `ChangelogShowRequested` → `GuiManager.Start()`（含 Alt+F4 退出热键注册）→ `UpdateUI.Init()`；随游戏自启校准失败的托盘提示在此处（GUI 就绪后）只发一次。
+9. **GUI 初始化** — `StartupMark("GUI 初始化")`：发布 `ChangelogShowRequested` → `UiShell.Start()`（读 `UiEngine` 规范化后分派引擎：先 `TrayController.Init()` 建引擎无关的托盘，再走 `GuiManager.Start()`，后者含 Alt+F4 退出热键注册）→ `UpdateUI.Init()`；随游戏自启校准失败的托盘提示在此处（GUI 就绪后）只发一次。
 10. **启动收尾** — `StartupMark("启动收尾")` 至 `StartupMark("")`：发布 `AppStartCompleted`（触发自动更新检查与游戏自动启动）→ `GameMonitor.Start()` → 发布 Legacy 事件 `SetSwitchKey`、`GuiUpdateHotkeyControls`、`GuiUpdateImportantControls`、`GuiUpdateCustomControls` 完成 GUI 初始化 → `StartupMark("")` 输出总耗时。
 
 ## 模块职责
@@ -82,7 +82,9 @@
 
 | 模块 | 职责 |
 |------|------|
-| `ui/gui.ahk` | 设置窗口 GUI 全部逻辑（标签页切换、控件事件、托盘菜单）。详见 [key_designs_ui.md](key_designs_ui.md) |
+| `ui/gui.ahk` | 设置窗口 GUI 全部逻辑（标签页切换、控件事件）。详见 [key_designs_ui.md](key_designs_ui.md) |
+| `ui/ui_shell.ahk` | 设置界面引擎分派（`UiShell`）。`Start()` 读 `Constants.NormalizeUiEngine(Config.GetImportant("UiEngine"))` 决定引擎，先 `TrayController.Init()` 再分派；并订阅 `SettingsShowRequested` 调 `Show()`。新增引擎时需同步 **`Constants.UiEngines` + `Config._DefaultImportant` + `Constants.ImportantNames`**（第三项漏登记会被 `SaveAllToIni` 从 ini 抹掉）；**引擎启动失败必须回退经典界面且异常不得冒泡**——`Bootstrap()` 在分派之后还要初始化 `UpdateUI`/`GameMonitor`/`HookMonitor` |
+| `ui/tray_controller.ahk` | 托盘菜单与图标提示的唯一 owner（`TrayController`）：`Init`/`OpenSettings`/`SetTooltip`/`SetHotkeyItemLabel`/`UpdateServer`。与界面引擎无关：`UiShell.Start()` 与 `GuiManager.Init()` 各调一次，后者保证切语言重建窗口后托盘菜单文案跟着刷新 |
 | `ui/key_bind.ahk` | 按键绑定捕获（InputHook），处理用户在设置界面的按键录制。`NotifyBindingChanged` 发布 `HotkeyBindingsChanged` 触发冲突检测刷新 |
 | `ui/custom_key_editor.ahk` | 自定义按键编辑窗口 + 坐标拾取。独立顶层 Gui（非 MainGui，KeyBinder 按键录制自动豁免）；单编辑窗口（再次打开直接切换目标行，未保存修改丢弃）；字段：命名 / 按键类型 / 按键功能（目前仅「单击」）/ 坐标（`(x, y)` 单值）；底部「删除」按钮确认后移除该行；打开期间光标在游戏客户区内（无需游戏前台）时 8ms 轮询 ToolTip 显示光标处 0-1 比例坐标，LButton 拾取（无 `~` 吞点击）**整体覆盖**坐标框并激活编辑窗口；保存时校验命名（50 字符、禁引号/反斜杠/控制字符）与「功能 + 坐标」，非法拒绝弹窗 |
 | `ui/updater_ui.ahk` | 更新 UI（对话框）。仅通过事件与 Updater 交互，不直接调用其内部方法 |

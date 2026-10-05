@@ -147,14 +147,8 @@ class GuiManager {
             this.DefaultTab := "keyBind"
         this.SwitchTab(this.DefaultTab)
 
-        ; 设置托盘菜单
-        A_IconTip := "AFA`n" I18n.T("热键已启用")
-        A_TrayMenu.Delete
-        A_TrayMenu.Add(I18n.T("打开设置界面"), (*) => this.Show())
-        A_TrayMenu.Add(I18n.T("启用/禁用热键"), (*) => EventBus.Publish("HotkeyToggleRequested"))
-        A_TrayMenu.Add(I18n.T("重启AFA"), (*) => (SingleInstance.Release(), Reload()))
-        A_TrayMenu.Add(I18n.T("退出"), (*) => ExitApp())
-        A_TrayMenu.Default := I18n.T("打开设置界面")
+        ; 托盘菜单由引擎无关的 TrayController 负责
+        TrayController.Init()
 
         ; 根据设置决定是否自动显示
         if (Config.GetImportant("AutoOpenSettings") == "1") {
@@ -1197,7 +1191,6 @@ class GuiManager {
         EventBus.Subscribe("GuiHideStopHook", HandleGuiHideStopHook)
         EventBus.Subscribe("UpdateCheckCompleted", (*) => this.OnCheckUpdateComplete())
         EventBus.Subscribe("UpdateCheckStarted", (*) => this.OnCheckUpdateStart())
-        EventBus.Subscribe("SettingsShowRequested", (*) => this.Show())
         EventBus.Subscribe("HotkeyStateChanged", (data) => this._OnHotkeyStateChanged(data))
         EventBus.Subscribe("HotkeyGroupChanged", (data) => this._OnHotkeyGroupChanged(data))
         EventBus.Subscribe("SwitchKeyChanged", (data) => this._OnSwitchKeyChanged(data))
@@ -1225,19 +1218,7 @@ class GuiManager {
     static _OnForegroundClientChanged(data) {
         Logger.Info("Gui", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
         this._RefreshRunningClientsText()
-        this._UpdateTrayServer(data.serverId)
-    }
-
-    ; 托盘提示带当前前台区服；切到桌面/非游戏窗口时保留上次游戏区服（否则显示“未知区服”）
-    static _UpdateTrayServer(serverId) {
-        if (serverId = "")
-            return
-        serverName := I18n.T("未知区服")
-        profile := ServerProfile.Get(serverId)
-        if (profile != "")
-            serverName := I18n.T(profile.DisplayNameKey)
-        state := HotkeyService.HotkeyState ? I18n.T("热键已启用") : I18n.T("热键已禁用")
-        A_IconTip := "AFA`n" serverName " - " state
+        TrayController.UpdateServer(data.serverId)
     }
 
     ; 语言切换：记录变更，保存/应用后统一重建
@@ -1255,10 +1236,10 @@ class GuiManager {
         HideTrayTip()
         SetTimer HideTrayTip, 0
         if (data.enabled) {
-            A_IconTip := "AFA`n" I18n.T("热键已启用")
+            TrayController.SetTooltip("AFA`n" I18n.T("热键已启用"))
             ShowTrayTip(I18n.T("热键已启用"), "AFA", "Mute")
         } else {
-            A_IconTip := "AFA`n" I18n.T("热键已禁用")
+            TrayController.SetTooltip("AFA`n" I18n.T("热键已禁用"))
             ShowTrayTip(I18n.T("热键已禁用"), "AFA", "Mute")
         }
         SetTimer HideTrayTip, -3000
@@ -1285,9 +1266,9 @@ class GuiManager {
     ; 处理切换键变化
     static _OnSwitchKeyChanged(data) {
         if (data.key = "")
-            A_TrayMenu.Rename("2&", I18n.T("启用/禁用热键"))
+            TrayController.SetHotkeyItemLabel(I18n.T("启用/禁用热键"))
         else
-            A_TrayMenu.Rename("2&", I18n.T("启用/禁用热键") "(" KeyFormat.VirtualNewkeyFormat(data.key) ")")
+            TrayController.SetHotkeyItemLabel(I18n.T("启用/禁用热键") "(" KeyFormat.VirtualNewkeyFormat(data.key) ")")
     }
 
     ; 处理设置保存

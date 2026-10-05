@@ -62,6 +62,8 @@
 #Include ../../src/lib/core/updater/changelog_checker.ahk
 #Include ../../src/lib/ui/status_bar.ahk
 #Include ../../src/lib/ui/gui.ahk
+#Include ../../src/lib/ui/ui_shell.ahk
+#Include ../../src/lib/ui/tray_controller.ahk
 #Include ../../src/lib/ui/custom_key_editor.ahk
 #Include ../../src/lib/core/monitor/game_monitor.ahk
 
@@ -81,6 +83,18 @@ try {
     if !IsSet(CustomHotkeyStore) || !IsSet(CustomScriptEngine) || !IsSet(CustomKeyEditor)
         ExitApp 1
     if !IsSet(ReleaseRepository) || !IsSet(GitHubTokenService) || !IsSet(ChangelogChecker)
+        ExitApp 1
+    if !IsSet(UiShell) || !IsSet(TrayController)
+        ExitApp 1
+
+    ; ---- 界面引擎规范化 ----
+    if (Constants.NormalizeUiEngine("WEB") != "web")
+        ExitApp 1
+    if (Constants.NormalizeUiEngine("Classic") != "classic")
+        ExitApp 1
+    if (Constants.NormalizeUiEngine("") != "classic")
+        ExitApp 1
+    if (Constants.NormalizeUiEngine("bogus") != "classic")
         ExitApp 1
 
     ; ---- HotkeySchema 完整性校验 ----
