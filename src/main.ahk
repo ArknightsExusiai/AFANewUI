@@ -59,6 +59,7 @@
 #Include ./lib/ui/gui.ahk
 #Include ./lib/ui/ui_shell.ahk
 #Include ./lib/ui/tray_controller.ahk
+#Include ./lib/ui/web/web_engine.ahk
 #Include ./lib/ui/custom_key_editor.ahk
 #Include ./lib/core/monitor/game_monitor.ahk
 #Include ./lib/core/monitor/hook_monitor.ahk
