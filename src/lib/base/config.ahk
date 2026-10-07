@@ -44,7 +44,7 @@ class Config {
         "AutoBeginPause", "0",
         "AutoBeginSpeed", "0",
         "BackCeaseOperations", "1",
-        "InLevelGuard", "1",
+        "InLevelGuard", "0",
         "DebugEnabled", "0",
         "Language", "auto",
         "ThemeMode", "auto",
@@ -53,12 +53,12 @@ class Config {
 
     ; 内部：默认自定义设置
     static _DefaultCustom := Map(
-        "ClickDelay", "90",
+        "ClickDelay", "50",
         "SwitchHotkey", "",
         "FrameSkip16msDelay", "16",
         "FrameSkip33msDelay", "30",
         "FrameSkip166msDelay", "165",
-        "HoverOperate", "1"
+        "HoverOperate", "0"
     )
 
     ; 配置文件路径
@@ -899,4 +899,3 @@ class Config {
     static AllCustom => this._CustomSettings
 
 }
-
