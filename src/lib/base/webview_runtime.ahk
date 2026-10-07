@@ -3,13 +3,22 @@
 class WebViewRuntime {
     static CLIENT_GUID := "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
-    ; 顺序=优先级：64>32，HKLM>HKCU
-    static _Roots := [
-        "HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\",
+    static _RootsNative := [
         "HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\",
-        "HKCU\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\",
         "HKCU\SOFTWARE\Microsoft\EdgeUpdate\Clients\"
     ]
+
+    static _RootsWow := [
+        "HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\",
+        "HKCU\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\"
+    ]
+
+    ; 与进程架构匹配的注册表视图优先，另一个兜底；两组内 HKLM 均在 HKCU 之前。
+    static _Roots() {
+        if (A_PtrSize = 8)
+            return [this._RootsNative[1], this._RootsWow[1], this._RootsNative[2], this._RootsWow[2]]
+        return [this._RootsWow[1], this._RootsNative[1], this._RootsWow[2], this._RootsNative[2]]
+    }
 
     static _Availability := ""
 
@@ -28,7 +37,7 @@ class WebViewRuntime {
     }
 
     static _FindVersion() {
-        for root in this._Roots {
+        for root in this._Roots() {
             version := this._ReadVersion(root . this.CLIENT_GUID)
             if (version != "")
                 return version

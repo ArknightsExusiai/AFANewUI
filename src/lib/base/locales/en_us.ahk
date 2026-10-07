@@ -554,6 +554,7 @@ class LocaleEnUS {
         "切换到经典UI", "Switch to the classic UI",
         "切换到现代UI", "Switch to the modern UI",
         "已切换界面引擎，重启 AFA 后生效", "Interface engine switched. It takes effect after restarting AFA",
+        "界面引擎切换失败，详见日志", "Failed to switch the interface engine. See the log for details",
         "现代UI（WebView2）不可用，已回退到经典UI，详见日志", "The modern UI (WebView2) is unavailable; fell back to the classic UI. See the log for details",
         "界面未能加载，可切回经典UI", "The UI failed to load; you can switch back to the classic UI",
         "跟随系统", "Follow system",

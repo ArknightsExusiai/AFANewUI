@@ -3,6 +3,8 @@
 
 class TrayController {
     static Engine := "classic"
+    static _EngineItemLabel := ""    ; 引擎切换项当前显示的文字（改名以它为准，与语言变化解耦）
+    static _SubscribedLocale := false
 
     ; 建立（或重建）托盘菜单。不传 engine 时沿用上次的引擎。
     static Init(engine := "") {
@@ -16,7 +18,9 @@ class TrayController {
         A_TrayMenu.Add(I18n.T("退出"), (*) => ExitApp())
         ; 引擎切换项必须追加在末尾：SetHotkeyItemLabel 按 "2&" 位置寻址，往前插会改错菜单项。
         A_TrayMenu.Add()
-        A_TrayMenu.Add(this.EngineSwitchLabel(), (*) => this.SwitchEngine())
+        this._SubscribeLocale()
+        this._EngineItemLabel := this.EngineSwitchLabel()
+        A_TrayMenu.Add(this._EngineItemLabel, (*) => this.SwitchEngine())
         A_TrayMenu.Default := I18n.T("打开设置界面")
     }
 
@@ -45,21 +49,43 @@ class TrayController {
         A_IconTip := "AFA`n" serverName " - " state
     }
 
-    ; 当UI是a时显示切换到b，当UI是b时显示切换到a。欸还需要重启才能生效呀🤔。所以这里要实时显示状态————emmmmmmmmmmmmmmmmmmmm让我想想怎么办。好的后面解决了
+    ; 菜单项文字显示的是"点下去会切到哪"那一侧，故当前是 web 时显示经典。
     static EngineSwitchLabel() {
         return this.Engine = "web" ? I18n.T("切换到经典UI") : I18n.T("切换到现代UI")
     }
 
-    ; 切换界面引擎。宿主在 Bootstrap 时建立，故写配置后需重启 AFA 才生效。应该给个明显一点的提示要求重启，就像有人没保存就以为是bug。。。
+    ; 语言切换当下不重建托盘菜单（整体重建要等保存/应用后的 GuiManager.Init），故引擎项自己跟一次，避免卡在旧语言。
+    static _SubscribeLocale() {
+        if (this._SubscribedLocale)
+            return
+        this._SubscribedLocale := true
+        EventBus.Subscribe("LocaleChanged", (*) => this.RefreshEngineItem())
+    }
+
+    ; 按当前引擎与语言刷新切换项文字；改名以"实际显示的那串文字"为依据。
+    static RefreshEngineItem() {
+        if (StrLen(this._EngineItemLabel) = 0)
+            return
+        newLabel := this.EngineSwitchLabel()
+        if (newLabel = this._EngineItemLabel)
+            return
+        A_TrayMenu.Rename(this._EngineItemLabel, newLabel)
+        this._EngineItemLabel := newLabel
+    }
+
+    ; 切换界面引擎。宿主在 Bootstrap 时建立，故写配置后需重启 AFA 才生效。
     static SwitchEngine() {
-        oldLabel := this.EngineSwitchLabel()
         next := this.Engine = "web" ? "classic" : "web"
-        SettingsService.UpdatePersistedValue("UiEngine", next)
+        result := SettingsService.UpdatePersistedValue("UiEngine", next)
+        if (!result.success) {
+            Logger.Error("TrayController", "界面引擎切换失败：" result.message)
+            MessageBox.Warning(I18n.T("界面引擎切换失败，详见日志"), I18n.T("界面引擎"))
+            return
+        }
         this.Engine := next
-        ; 立即在托盘把名字改过来防止有人点了一次没重启以为没点到然后总共点了偶数次发现重启还是原来的UI界面（应该不会有人这样吧，但是万一呢）。
-        A_TrayMenu.Rename(oldLabel, this.EngineSwitchLabel())
+        ; 立即改名，避免用户误以为未点击生效。
+        this.RefreshEngineItem()
         Logger.Info("TrayController", "界面引擎已切换为 " next "，重启后生效")
         MessageBox.Info(I18n.T("已切换界面引擎，重启 AFA 后生效"), I18n.T("界面引擎"))
-        ; 完了我感觉工作量有点大。这样引擎的切换应该算是完成了吧我去。前端的话慢慢搞咯。先把这个放进仓库里让老大看看做得怎么样。
     }
 }

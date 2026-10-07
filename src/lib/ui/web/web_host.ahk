@@ -16,6 +16,8 @@ class WebHost {
     static _FellBack := false
     static _Notified := false
     static _ReadyFn := ""
+    static _Starting := false  ; _StartCore 进行中；await2 期间可被新线程重入
+    static _AltF4Cond := ""
 
     ; 入口。安检！安检！通过则由 web 引擎接管并返回 true；否则返回 false，false就会让调用的那个地方自己处理回落经典界面。
     static Activate() {
@@ -55,7 +57,19 @@ class WebHost {
             this.Gui.Hide()
     }
 
+    ; 创建中守卫：await2 期间（最长 15 s）若有新线程再次请求显示，不得二次进入创建流程覆盖 Gui/Controller。
     static _Start() {
+        if (this._Starting)
+            return
+        this._Starting := true
+        try {
+            this._StartCore()
+        } finally {
+            this._Starting := false
+        }
+    }
+
+    static _StartCore() {
         try {
             this.Gui := Gui("+Resize", this._WindowTitle())
             this.Gui.OnEvent("Close", (*) => this._OnClose())
@@ -71,6 +85,11 @@ class WebHost {
             Theme.Attach(this.Gui)
         } catch Error as e {
             Logger.Warn("WebHost", "窗口主题登记失败（继续）：" e.Message)
+        }
+        try {
+            this._BindAltF4()
+        } catch Error as e {
+            Logger.Warn("WebHost", "Alt+F4 注册失败（继续）：" e.Message)
         }
         try {
             this.Controller := WebView2.CreateControllerAsync(this.Gui.Hwnd, , this._UserDataDir(), , this._LoaderPath()).await2(this.CREATE_TIMEOUT_MS)
@@ -154,6 +173,23 @@ class WebHost {
         return A_LineFile "\..\..\..\vendor\WebView2\" (A_PtrSize = 8 ? "64bit" : "32bit") "\WebView2Loader.dll"
     }
 
+    ; Alt+F4 始终退出（与经典界面一致）：经典模式由 GuiManager.Start() 注册，web 模式走这里。
+    static _BindAltF4() {
+        if (!IsObject(this._AltF4Cond))
+            this._AltF4Cond := (*) => WebHost.Gui != "" && WinActive("ahk_id " WebHost.Gui.Hwnd)
+        HotIf(this._AltF4Cond)
+        Hotkey("!F4", (*) => ExitApp(), "On")
+        HotIf
+    }
+
+    static _UnbindAltF4() {
+        if (!IsObject(this._AltF4Cond))
+            return
+        HotIf(this._AltF4Cond)
+        try Hotkey("!F4", "Off")
+        HotIf
+    }
+
     static _WindowTitle() {
         return I18n.T("明日方舟帧操小助手 ArknightsFrameAssistant - {1}", Version.Get())
     }
@@ -173,7 +209,6 @@ class WebHost {
 
     ; 让控制器填满当前客户区：创建时窗口可能尚未布局完成，库的自动 Fill 会拿到 0 尺寸，
     ; 故每次显示与尺寸变化后都要重新 Fill，否则内容区为 0 宽、页面空白。
-    ; 打开时闪一下的问题出自这里吗？不确定欸。。。
     static _FillController() {
         if (this.Controller = "")
             return
@@ -214,7 +249,7 @@ class WebHost {
 
     static _UnwrapJsonString(json) {
         if (SubStr(json, 1, 1) = '"' && SubStr(json, -1) = '"')
-            return SubStr(json, 2, -2)
+            return SubStr(json, 2, StrLen(json) - 2)
         return json
     }
 
@@ -240,7 +275,6 @@ class WebHost {
         this._Notify(I18n.T("界面未能加载，可切回经典UI"))
     }
 
-    ; 再次保证能正常使用
     ; 运行期失败：提示一次、销毁窗口并回落经典界面。预检失败不走这里（由 UiShell 接住）。
     static _Fallback(reason) {
         this._FellBack := true
@@ -251,6 +285,7 @@ class WebHost {
     }
 
     static _DestroyGui() {
+        this._UnbindAltF4()
         this._DisarmReadyTimeout()
         try {
             if (this.Controller != "")
