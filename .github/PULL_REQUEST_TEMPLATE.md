@@ -4,19 +4,6 @@
 ## 关联 Issue
 <!-- 如果该 PR 解决了某个 Issue，请在此填写 Issue 编号（如 "fixes #123"） -->
 
-## 变更类型
-<!-- 请在对应的选项前 [ ] 中填写 x，例如 [x] 新功能。测试清单随代码提交时类型为 docs、scope 为 test，如 docs(test): 添加 xxx 测试清单 -->
-- [ ] 新功能（feat）
-- [ ] Bug 修复（fix）
-- [ ] 文档更新（docs）
-- [ ] 代码风格优化（style）
-- [ ] 重构（refactor）
-- [ ] 性能优化（perf）
-- [ ] 测试（test）
-- [ ] 构建过程或辅助工具的变动（chore）
-- [ ] GUI相关修改（ui）
-- [ ] 其他，请描述：
-
 ## 测试清单
 <!-- 本项目没有自动化测试框架，所有测试为手工验证。请按 test/template/test_template.md 创建测试清单 -->
 - [ ] 已按 test/template/test_template.md 完成手工测试验证

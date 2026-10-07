@@ -138,6 +138,5 @@ jobs:
           tccli cdn PurgePathCache --Paths "$PATHS" --FlushType flush
           if [ "${{ steps.channel.outputs.name }}" = "stable" ]; then
             tccli cdn PurgeUrlsCache \
-              --Urls "[\"https://${DOMAIN}/latest\", \"https://${DOMAIN}/latest/\"]" \
-              --FlushType delete
+              --Urls "[\"https://${DOMAIN}/latest\", \"https://${DOMAIN}/latest/\"]"
           fi
