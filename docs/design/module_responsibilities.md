@@ -21,7 +21,7 @@
 6. **加载设置** — `StartupMark("设置加载")`：`SettingsService.Initialize()` 加载配置；`Logger.RegisterSecret()` 注册 Token 与脚本路径；若 `Logger.PreviousAbnormalFile != ""`（上一会话异常退出）则提示导出诊断包。
 7. **随游戏自动启动校准** — `StartupMark("随游戏自动启动校准")`：`AppContext.SetStartedByGameAutoStart()` + `GameAutoStartManager.Reconcile()`；关闭该功能时若返回 `shouldExit` 则只清理任务并退出。
 8. **资源与游戏按键** — `StartupMark("资源提取")` 起，经 `StartupMark("游戏按键识别")`、`StartupMark("热键注册")`：`FileExtractor.EnsureExtracted()` 提取嵌入资源；`GameKeys.Init()`（读注册表游戏按键 + 启动 10s 轮询定时器，**必须在 `HotkeyOn` 之前**）→ `HotkeyService.HotkeyOn()` 激活热键。
-9. **GUI 初始化** — `StartupMark("GUI 初始化")`：发布 `ChangelogShowRequested` → `UiShell.Start()`（读 `UiEngine` 规范化后分派引擎：先 `TrayController.Init()` 建引擎无关的托盘，再走 `GuiManager.Start()`，后者含 Alt+F4 退出热键注册）→ `UpdateUI.Init()`；随游戏自启校准失败的托盘提示在此处（GUI 就绪后）只发一次。
+9. **GUI 初始化** — `StartupMark("GUI 初始化")`：发布 `ChangelogShowRequested` → `UiShell.Start()`（读 `UiEngine` 规范化后分派引擎：先 `TrayController.Init()` 建引擎无关的托盘，再按引擎分派——`web` → `WebHost.Activate()`，预检失败或 `classic` → `GuiManager.Start()`，后者含 Alt+F4 退出热键注册）→ `UpdateUI.Init()`；随游戏自启校准失败的托盘提示在此处（GUI 就绪后）只发一次。
 10. **启动收尾** — `StartupMark("启动收尾")` 至 `StartupMark("")`：发布 `AppStartCompleted`（触发自动更新检查与游戏自动启动）→ `GameMonitor.Start()` → 发布 Legacy 事件 `SetSwitchKey`、`GuiUpdateHotkeyControls`、`GuiUpdateImportantControls`、`GuiUpdateCustomControls` 完成 GUI 初始化 → `StartupMark("")` 输出总耗时。
 
 ## 模块职责
@@ -39,6 +39,7 @@
 | `base/token_protector.ahk` | GitHub Token 的 Windows DPAPI 加密保护（`TokenProtector` 类）。`Protect()` 用 `CryptProtectData`（CurrentUser）加密并 Base64 编码，返回带 `dpapi:v1:` 前缀的存储值；`Unprotect()` 解密，无前缀值按旧版明文处理（供迁移）。内存缓冲用 `_SecureZero` 清零。由 `config.ahk` 的 `_ReadGitHubToken`/`MigrateGitHubToken`（启动时把旧版明文迁移为加密值）调用，加密值存于 `[Main]` 的 `GitHubTokenProtected` 键 |
 | `base/eventbus.ahk` | 发布/订阅事件总线，模块间解耦。事件清单见 [reference.md](reference.md#eventbus-事件清单) |
 | `base/file_extractor.ahk` | 管理编译时 `FileInstall` 嵌入资源的运行时提取。`EnsureExtracted()` 将 `logo.ico`（含大小校验防旧版残留）、三张 `TakeOverButton_*.png`（代理作战按钮图像）和关卡检测模板（保留备用，PixelSearch 方案不依赖）统一提取到 `%AppData%\ArknightsFrameAssistant\PC\resources\` |
+| `base/webview_runtime.ahk` | WebView2 Runtime 探测（`WebViewRuntime`，纯注册表查询、无依赖）：`CLIENT_GUID` + 四个注册表根（64 位视图优先于 32 位视图、HKLM 优先于 HKCU）；`pv` 为空或 `0.0.0.0` 视为未安装。`IsAvailable()` 结果缓存（一个进程只探测一次），`GetVersion()` 不走缓存、供日志使用 |
 | `base/game_target.ahk` | 「当前目标游戏窗口」的唯一 owner：`Hwnd`/`Pid`/`ExePath`/`ServerId`。未绑定客户端实例时宽松回退旧语义 `ahk_exe Arknights.exe`（决策 D2），保证升级零回归、降级不弹窗；**禁止其他模块再直接写 `"ahk_exe Arknights.exe"`**。只持有状态与查询 API，绑定/仲裁由 `core/game/game_client_registry.ahk` 驱动 |
 | `base/server_profile.ahk` | 区服元数据与识别的唯一 owner（纯数据 + 纯函数，不引用 core/ui、无副作用）。从安装目录/可执行文件推断区服并给出对应 Unity PlayerPrefs 注册表根。多区服细节见 [key_designs_hotkey.md](key_designs_hotkey.md#多区服与热路径预算) |
 | `base/single_instance.ahk` | 单例识别（命名互斥体 `ArknightsFrameAssistant-Singleton`）。与可执行文件名无关（编译版/未编译版行为一致），不依赖 WMI/COM，启动早期即可安全使用。有意让新进程接管前（托盘重启/提权重启）须先 `Release()`，避免新进程被误判为重复启动 |
@@ -85,6 +86,8 @@
 | `ui/gui.ahk` | 设置窗口 GUI 全部逻辑（标签页切换、控件事件）。详见 [key_designs_ui.md](key_designs_ui.md) |
 | `ui/ui_shell.ahk` | 设置界面引擎分派（`UiShell`）。`Start()` 读 `Constants.NormalizeUiEngine(Config.GetImportant("UiEngine"))` 决定引擎，先 `TrayController.Init()` 再分派；并订阅 `SettingsShowRequested` 调 `Show()`。新增引擎时需同步 **`Constants.UiEngines` + `Config._DefaultImportant` + `Constants.ImportantNames`**（第三项漏登记会被 `SaveAllToIni` 从 ini 抹掉）；**引擎启动失败必须回退经典界面且异常不得冒泡**——`Bootstrap()` 在分派之后还要初始化 `UpdateUI`/`GameMonitor`/`HookMonitor` |
 | `ui/tray_controller.ahk` | 托盘菜单与图标提示的唯一 owner（`TrayController`）：`Init`/`OpenSettings`/`SetTooltip`/`SetHotkeyItemLabel`/`UpdateServer`。与界面引擎无关：`UiShell.Start()` 与 `GuiManager.Init()` 各调一次，后者保证切语言重建窗口后托盘菜单文案跟着刷新 |
+| `ui/web/web_engine.ahk` | web 引擎聚合 include：`main.ahk` 只 include 本文件一行（上游 `#Include` 区是唯一热点），内部按序引入 vendored `Promise`/`WebView2`、`base/webview_runtime.ahk` 与 `web_host.ahk`。`src/lib/vendor/` 为 ahk2_lib 最小集（`ComVar`/`Promise`/`WebView2` + 两个 `WebView2Loader.dll`），来源与许可见其 `VENDOR_INFO.txt` |
+| `ui/web/web_host.ahk` | web 引擎宿主（`WebHost`）：预检（Runtime → `app/index.html` 存在）→ **窗口可见 `Show()` 之后**才 `CreateControllerAsync(hwnd, , 应用私有用户数据目录)` 并 `await2(15 s)` → 设置 + `SetVirtualHostNameToFolderMapping(host, dir, **1**)`（accessKind 必须为 `1`=ALLOW，`0`=DENY 会让页面全空白）→ 绑定 `WebMessageReceived`（回调**恰好两个参数**）→ `Navigate("https://afa.app/index.html")` → 武装 8 s 握手超时（未收到 `ready` 只 Warn + 托盘气泡，**不关窗**）→ `Ready`；`Size` 事件与每次 `Show()` 都 `Fill()`。关闭按钮只隐藏窗口并复用控制器，销毁时 `Controller.Close()`。运行期失败经 `_Fallback()` 回退经典界面；**只订阅事件、不发布事件**。页面资源当前仅源码运行时可用（编译版资源提取属打包阶段），故编译版 `UiEngine=web` 会回退 classic |
 | `ui/key_bind.ahk` | 按键绑定捕获（InputHook），处理用户在设置界面的按键录制。`NotifyBindingChanged` 发布 `HotkeyBindingsChanged` 触发冲突检测刷新 |
 | `ui/custom_key_editor.ahk` | 自定义按键编辑窗口 + 坐标拾取。独立顶层 Gui（非 MainGui，KeyBinder 按键录制自动豁免）；单编辑窗口（再次打开直接切换目标行，未保存修改丢弃）；字段：命名 / 按键类型 / 按键功能（目前仅「单击」）/ 坐标（`(x, y)` 单值）；底部「删除」按钮确认后移除该行；打开期间光标在游戏客户区内（无需游戏前台）时 8ms 轮询 ToolTip 显示光标处 0-1 比例坐标，LButton 拾取（无 `~` 吞点击）**整体覆盖**坐标框并激活编辑窗口；保存时校验命名（50 字符、禁引号/反斜杠/控制字符）与「功能 + 坐标」，非法拒绝弹窗 |
 | `ui/updater_ui.ahk` | 更新 UI（对话框）。仅通过事件与 Updater 交互，不直接调用其内部方法 |
