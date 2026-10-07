@@ -73,7 +73,7 @@ class WebHost {
             Logger.Warn("WebHost", "窗口主题登记失败（继续）：" e.Message)
         }
         try {
-            this.Controller := WebView2.CreateControllerAsync(this.Gui.Hwnd, , this._UserDataDir()).await2(this.CREATE_TIMEOUT_MS)
+            this.Controller := WebView2.CreateControllerAsync(this.Gui.Hwnd, , this._UserDataDir(), , this._LoaderPath()).await2(this.CREATE_TIMEOUT_MS)
             this.CoreWV := this.Controller.CoreWebView2
         } catch Error as e {
             this._Fallback("WebView2 控制器创建失败：" e.Message)
@@ -124,6 +124,11 @@ class WebHost {
             reason := "界面资源缺失：" this._AssetsDir()
             return false
         }
+        ; 加载器存在性检查：主要防护源码运行时的 DLL 劫持（编译版由 _EnsureAssets() 先行拦下）。
+        if (!FileExist(this._LoaderPath())) {
+            reason := "缺少 WebView2 加载器：" this._LoaderPath()
+            return false
+        }
         return true
     }
 
@@ -141,6 +146,12 @@ class WebHost {
     ; 库的默认用户数据目录是本机共享的 Edge 用户数据根，多应用会互相干扰，故指定应用私有目录。
     static _UserDataDir() {
         return A_AppData "\ArknightsFrameAssistant\PC\webview2"
+    }
+
+    ; 加载器必须给绝对路径：库的默认值是相对名 'WebView2Loader.dll'，会命中进程工作目录里的同名文件（DLL 劫持）。
+    ; A_LineFile 是"文件"路径，故退三级到 lib\ 再进 vendor\。
+    static _LoaderPath() {
+        return A_LineFile "\..\..\..\vendor\WebView2\" (A_PtrSize = 8 ? "64bit" : "32bit") "\WebView2Loader.dll"
     }
 
     static _WindowTitle() {
