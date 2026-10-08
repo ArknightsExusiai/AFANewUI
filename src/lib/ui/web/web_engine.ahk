@@ -3,5 +3,4 @@
 
 #Include ../../vendor/Promise.ahk
 #Include ../../vendor/WebView2/WebView2.ahk
-#Include ..\..\base\webview_runtime.ahk
 #Include web_host.ahk
