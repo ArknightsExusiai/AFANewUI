@@ -293,7 +293,6 @@ class WebHost {
         }
         if (this.Gui != "") {
             try Theme.Destroy(this.Gui)
-            try this.Gui.Destroy()
         }
         this.Gui := ""
         this.Controller := ""
