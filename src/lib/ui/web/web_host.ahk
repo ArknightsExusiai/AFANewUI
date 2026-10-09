@@ -31,7 +31,6 @@ class WebHost {
             this._Notify()
             return false
         }
-        EventBus.Subscribe("SettingsShowRequested", (*) => this.Show())
         EventBus.Subscribe("LocaleChanged", (*) => this._OnLocaleChanged())
         Logger.Info("WebHost", "web 引擎已就绪，Runtime=" WebViewRuntime.GetVersion())
         if (Config.ReadImportantFromIni("AutoOpenSettings") = "1")
