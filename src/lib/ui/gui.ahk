@@ -1193,7 +1193,6 @@ class GuiManager {
         EventBus.Subscribe("UpdateCheckStarted", (*) => this.OnCheckUpdateStart())
         EventBus.Subscribe("HotkeyStateChanged", (data) => this._OnHotkeyStateChanged(data))
         EventBus.Subscribe("HotkeyGroupChanged", (data) => this._OnHotkeyGroupChanged(data))
-        EventBus.Subscribe("SwitchKeyChanged", (data) => this._OnSwitchKeyChanged(data))
         EventBus.Subscribe("SettingsSaved", (*) => this._OnSettingsSaved())
         EventBus.Subscribe("SettingsApplied", (*) => this._OnSettingsApplied())
         EventBus.Subscribe("SettingsCancelled", (*) => this._OnSettingsCancelled())
@@ -1218,7 +1217,6 @@ class GuiManager {
     static _OnForegroundClientChanged(data) {
         Logger.Info("Gui", "前台客户端变化：serverId=" data.serverId ", pid=" data.pid)
         this._RefreshRunningClientsText()
-        TrayController.UpdateServer(data.serverId)
     }
 
     ; 语言切换：记录变更，保存/应用后统一重建
@@ -1236,10 +1234,8 @@ class GuiManager {
         HideTrayTip()
         SetTimer HideTrayTip, 0
         if (data.enabled) {
-            TrayController.SetTooltip("AFA`n" I18n.T("热键已启用"))
             ShowTrayTip(I18n.T("热键已启用"), "AFA", "Mute")
         } else {
-            TrayController.SetTooltip("AFA`n" I18n.T("热键已禁用"))
             ShowTrayTip(I18n.T("热键已禁用"), "AFA", "Mute")
         }
         SetTimer HideTrayTip, -3000
@@ -1261,14 +1257,6 @@ class GuiManager {
                 ShowTrayTip(I18n.T("已退出卫戍协议方案"), "AFA", "Mute")
             SetTimer HideTrayTip, -3000
         }
-    }
-
-    ; 处理切换键变化
-    static _OnSwitchKeyChanged(data) {
-        if (data.key = "")
-            TrayController.SetHotkeyItemLabel(I18n.T("启用/禁用热键"))
-        else
-            TrayController.SetHotkeyItemLabel(I18n.T("启用/禁用热键") "(" KeyFormat.VirtualNewkeyFormat(data.key) ")")
     }
 
     ; 处理设置保存

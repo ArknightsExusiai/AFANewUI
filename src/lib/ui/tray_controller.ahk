@@ -5,12 +5,14 @@ class TrayController {
     static Engine := "classic"
     static _EngineItemLabel := ""    ; 引擎切换项当前显示的文字（改名以它为准，与语言变化解耦）
     static _SubscribedLocale := false
+    static _SubscribedRefresh := false
+    static _LastServerId := ""       ; 最近一次前台区服；热键开关时据此重绘提示，避免把区服抹掉
 
     ; 建立（或重建）托盘菜单。不传 engine 时沿用上次的引擎。
     static Init(engine := "") {
         if (engine != "")
             this.Engine := engine
-        A_IconTip := "AFA`n" I18n.T("热键已启用")
+        this._RenderTooltip(this._LastServerId)
         A_TrayMenu.Delete
         A_TrayMenu.Add(I18n.T("打开设置界面"), (*) => this.OpenSettings())
         A_TrayMenu.Add(I18n.T("启用/禁用热键"), (*) => EventBus.Publish("HotkeyToggleRequested"))
@@ -19,9 +21,12 @@ class TrayController {
         ; 引擎切换项必须追加在末尾：SetHotkeyItemLabel 按 "2&" 位置寻址，往前插会改错菜单项。
         A_TrayMenu.Add()
         this._SubscribeLocale()
+        this._SubscribeRefresh()
         this._EngineItemLabel := this.EngineSwitchLabel()
         A_TrayMenu.Add(this._EngineItemLabel, (*) => this.SwitchEngine())
         A_TrayMenu.Default := I18n.T("打开设置界面")
+        ; 菜单项齐了再补绑定键：Rename 按 "2&" 位置寻址，早于 Add 会改错项
+        this.RefreshHotkeyItem(Config.ReadCustomFromIni("SwitchHotkey"))
     }
 
     static OpenSettings() {
@@ -41,12 +46,22 @@ class TrayController {
     static UpdateServer(serverId) {
         if (serverId = "")
             return
-        serverName := I18n.T("未知区服")
-        profile := ServerProfile.Get(serverId)
-        if (profile != "")
-            serverName := I18n.T(profile.DisplayNameKey)
+        this._LastServerId := serverId
+        this._RenderTooltip(serverId)
+    }
+
+    ; 提示内容的唯一渲染入口。状态取实时值；无区服时只显示状态
+    static _RenderTooltip(serverId) {
         state := HotkeyService.HotkeyState ? I18n.T("热键已启用") : I18n.T("热键已禁用")
-        A_IconTip := "AFA`n" serverName " - " state
+        if (StrLen(serverId) = 0)
+            this.SetTooltip("AFA`n" state)
+        else
+            this.SetTooltip("AFA`n" this._ServerName(serverId) " - " state)
+    }
+
+    static _ServerName(serverId) {
+        profile := ServerProfile.Get(serverId)
+        return profile != "" ? I18n.T(profile.DisplayNameKey) : I18n.T("未知区服")
     }
 
     ; 菜单项文字显示的是"点下去会切到哪"那一侧，故当前是 web 时显示经典。
@@ -71,6 +86,24 @@ class TrayController {
             return
         A_TrayMenu.Rename(this._EngineItemLabel, newLabel)
         this._EngineItemLabel := newLabel
+    }
+
+    ; 运行期刷新订阅：与界面引擎无关，classic 与 web 都只建一次
+    static _SubscribeRefresh() {
+        if (this._SubscribedRefresh)
+            return
+        this._SubscribedRefresh := true
+        EventBus.Subscribe("SwitchKeyChanged", (data) => this.RefreshHotkeyItem(data.key))
+        EventBus.Subscribe("ForegroundClientChanged", (data) => this.UpdateServer(data.serverId))
+        EventBus.Subscribe("HotkeyStateChanged", (*) => this._RenderTooltip(this._LastServerId))
+    }
+
+    ; 第 2 项（启用/禁用热键）附带当前绑定键
+    static RefreshHotkeyItem(key) {
+        if (StrLen(key) = 0)
+            this.SetHotkeyItemLabel(I18n.T("启用/禁用热键"))
+        else
+            this.SetHotkeyItemLabel(I18n.T("启用/禁用热键") "(" KeyFormat.VirtualNewkeyFormat(key) ")")
     }
 
     ; 切换界面引擎。宿主在 Bootstrap 时建立，故写配置后需重启 AFA 才生效。
