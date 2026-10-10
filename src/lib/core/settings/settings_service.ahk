@@ -284,6 +284,15 @@ class SettingsService {
             }
         }
 
+        ; 界面类型改到 web 但本机没有 WebView2
+        if (this._NeedsWebRuntimeWarning()) {
+            confirmResult := MessageBox.Confirm(
+                I18n.T("未检测到 WebView2 运行时，切换到 WebView2 后会回退到 Windows 原生 GUI。是否仍要保存此设置？"),
+                I18n.T("界面类型"))
+            if (confirmResult != "Yes")
+                return false
+        }
+
         ; 保存到 INI；已确认的失效路径清理在此提交
         this._ClearConfirmedPaths(missingEntries)
 
