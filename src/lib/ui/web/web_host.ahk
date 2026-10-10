@@ -270,8 +270,16 @@ class WebHost {
         this._ReadyFn := ""
         if (this.PageReady || this._FellBack)
             return
-        Logger.Warn("WebHost", "界面未在 " this.READY_TIMEOUT_MS " ms 内上报 ready")
-        this._Notify(I18n.T("界面未能加载，可切回经典UI"))
+        reason := "界面未在 " this.READY_TIMEOUT_MS " ms 内上报 ready"
+        Logger.Warn("WebHost", reason)
+        ; 调试模式默认保留窗口供查 DevTools
+        if (Config.ReadImportantFromIni("DebugEnabled") = "1") {
+            if (MessageBox.Confirm(I18n.T("界面未能加载。是否回退到经典界面？选择「否」可保留当前窗口以便排查。"), I18n.T("界面类型")) != "Yes") {
+                this._Notify(I18n.T("界面未能加载，已保留窗口供排查，详见日志"))
+                return
+            }
+        }
+        this._Fallback(reason)
     }
 
     ; 运行期失败：提示一次、销毁窗口并回落经典界面。预检失败不走这里（由 UiShell 接住）。
@@ -305,7 +313,7 @@ class WebHost {
         if (this._Notified)
             return
         this._Notified := true
-        text := StrLen(message) > 0 ? message : I18n.T("现代UI（WebView2）不可用，已回退到经典UI，详见日志")
-        try TrayTip(text, I18n.T("界面引擎"))
+        text := StrLen(message) > 0 ? message : I18n.T("WebView2 界面不可用，已回退到 Windows 原生 GUI，详见日志")
+        try TrayTip(text, I18n.T("界面类型"))
     }
 }
