@@ -1,15 +1,8 @@
 ; == 界面引擎分派（classic / web） ==
-; 设置界面的启动与显示统一走这里，调用方不需要知道当前用的是哪套引擎。
-; 我是一个AFA，我有两套UI！
-
 class UiShell {
     static Engine := "classic"
     static _Subscribed := false
-
-    ; 启动设置界面。托盘引擎无关，先于引擎分派初始化。
-    ; 引擎初始化失败只允许回落到经典界面，异常不得向外传播：
-    ; 那我的默认引擎应该是classic界面这样才是最保险的。
-    ; Bootstrap() 在分派之后还要初始化 UpdateUI / GameMonitor / HookMonitor。
+    ; 启动设置界面
     static Start() {
         this.Engine := "classic"
         try {
