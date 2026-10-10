@@ -1,4 +1,4 @@
-; == 界面引擎分派（classic / web） ==
+; == 界面类型分派（classic / web） ==
 class UiShell {
     static Engine := "classic"
     static _Subscribed := false
@@ -8,13 +8,13 @@ class UiShell {
         try {
             this.Engine := Constants.NormalizeUiEngine(Config.GetImportant("UiEngine"))
             this._Subscribe()
-            TrayController.Init(this.Engine)
-            Logger.Info("UiShell", "设置界面引擎：" this.Engine)
+            TrayController.Init()
+            Logger.Info("UiShell", "设置界面类型：" this.Engine)
             if (this.Engine = "web" && WebHost.Activate())
                 return
             this.Engine := "classic"
         } catch Error as e {
-            Logger.Error("UiShell", "界面引擎初始化失败，回落到经典界面：" e.Message)
+            Logger.Error("UiShell", "界面类型初始化失败，回落到经典界面：" e.Message)
             this.Engine := "classic"
         }
         GuiManager.Start()
